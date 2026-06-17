@@ -154,7 +154,7 @@ export async function GET() {
 
     // Get the relevant stat array for this market
     const statValues = storedPlayer.games.map((g) => {
-      const v = (g as Record<string, unknown>)[market.statType];
+      const v = (g as unknown as Record<string, unknown>)[market.statType];
       return typeof v === "number" ? v : 0;
     });
 
