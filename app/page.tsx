@@ -78,7 +78,7 @@ function formatTime(iso: string) {
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<"backtest" | "builder" | "live" | "props">("live");
+  const [tab, setTab] = useState<"backtest" | "builder" | "live" | "props" | "auto">("live");
   const [bands, setBands] = useState<BandResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(true);
@@ -137,6 +137,46 @@ export default function Home() {
     ? Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 100) / 100
     : 0;
 
+  // Auto Multi: generate best combinations by EV for each leg count
+  interface AutoMultiCombo {
+    legs: PlayerProp[];
+    combinedOdds: number;
+    strikeRate: number;
+    ev100: number;
+  }
+
+  function getBestCombos(pool: PlayerProp[], legCount: number, topN = 5): AutoMultiCombo[] {
+    if (pool.length < legCount) return [];
+    const results: AutoMultiCombo[] = [];
+
+    function combine(start: number, current: PlayerProp[]) {
+      if (current.length === legCount) {
+        const combinedOdds = Math.round(current.reduce((a, p) => a * p.bestOdds, 1) * 100) / 100;
+        const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate / 100), 1) * 1000) / 10;
+        const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
+        results.push({ legs: [...current], combinedOdds, strikeRate, ev100 });
+        return;
+      }
+      for (let i = start; i < pool.length; i++) {
+        // Skip same-player duplicate stat types (only disposals for now, but future-proof)
+        if (current.some((p) => p.playerName === pool[i].playerName)) continue;
+        current.push(pool[i]);
+        combine(i + 1, current);
+        current.pop();
+      }
+    }
+
+    combine(0, []);
+    return results.sort((a, b) => b.ev100 - a.ev100).slice(0, topN);
+  }
+
+  // Use top-edge props as the pool (cap at 15 to keep combos manageable)
+  const autoPool = props.filter((p) => p.edge >= 10).slice(0, 15);
+  const autoCombos: { legs: number; combos: AutoMultiCombo[] }[] = [3, 4, 5, 6].map((n) => ({
+    legs: n,
+    combos: getBestCombos(autoPool, n),
+  }));
+
   const filteredGames = games.filter((g) => {
     const conf = g.squiggleConfidence ?? g.impliedWinPct;
     const sportOk = sportFilter === "ALL" || g.sport === sportFilter;
@@ -156,14 +196,15 @@ export default function Home() {
         {[
           { key: "live", label: "Match Odds" },
           { key: "props", label: "Player Props" },
+          { key: "auto", label: "Auto Multi" },
           { key: "builder", label: "My Multi" },
           { key: "backtest", label: "Backtest" },
         ].map(({ key, label }) => (
           <button
             key={key}
             onClick={() => {
-              setTab(key as "backtest" | "builder" | "live" | "props");
-              if (key === "props" && !propsLoaded && !propsLoading) {
+              setTab(key as "backtest" | "builder" | "live" | "props" | "auto");
+              if ((key === "props" || key === "auto") && !propsLoaded && !propsLoading) {
                 setPropsLoading(true);
                 fetch("/api/player-props")
                   .then((r) => r.json())
@@ -341,6 +382,121 @@ export default function Home() {
                     </button>
                   );
                 })}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* AUTO MULTI TAB */}
+        {tab === "auto" && (
+          <div className="space-y-4">
+            {!propsLoaded && propsLoading ? (
+              <div className="text-center py-16 text-gray-400">
+                <div className="text-4xl mb-3">🤖</div>
+                <p className="font-medium text-white">Generating best multis…</p>
+                <p className="text-sm mt-1 text-gray-500">Fetching player stats and crunching combinations.</p>
+              </div>
+            ) : !propsLoaded ? (
+              <div className="text-center py-16 text-gray-400">
+                <div className="text-4xl mb-3">🤖</div>
+                <p className="font-medium text-white">Auto Multi</p>
+                <p className="text-sm mt-1 mb-4">Generates the highest EV combinations from all current player props.</p>
+              </div>
+            ) : autoPool.length < 3 ? (
+              <div className="text-center py-12 text-gray-400">
+                <p className="font-medium text-white">Not enough qualifying props</p>
+                <p className="text-sm mt-1">Need at least 3 players with 10%+ edge. Try again closer to game day.</p>
+              </div>
+            ) : (
+              <>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
+                  <p>🤖 Best combinations ranked by Expected Value — sorted highest EV first. Pool: {autoPool.length} players with 10%+ edge.</p>
+                </div>
+
+                {autoCombos.map(({ legs, combos }) => (
+                  combos.length === 0 ? null : (
+                    <div key={legs} className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                        <h2 className="font-semibold text-white">{legs}-leg multis</h2>
+                        <span className="text-xs text-gray-500">Top {combos.length} by EV</span>
+                      </div>
+                      <div className="divide-y divide-gray-800">
+                        {combos.map((combo, idx) => (
+                          <div key={idx} className="p-4">
+                            {/* Summary row */}
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex gap-3">
+                                <div className="text-center">
+                                  <div className="text-xl font-bold text-green-400">${combo.combinedOdds}</div>
+                                  <div className="text-gray-500 text-xs">odds</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xl font-bold text-yellow-400">{combo.strikeRate}%</div>
+                                  <div className="text-gray-500 text-xs">strike rate</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className={`text-xl font-bold ${combo.ev100 >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                    {combo.ev100 >= 0 ? "+" : ""}${combo.ev100}
+                                  </div>
+                                  <div className="text-gray-500 text-xs">EV/$100</div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  combo.legs.forEach((prop) => {
+                                    const propId = `prop-${prop.playerName}-${prop.statType}`;
+                                    if (!multi.find((l) => l.id === propId) && multi.length < 8) {
+                                      setMulti((prev) => [...prev, {
+                                        id: propId,
+                                        tip: `${prop.playerName} ${Math.ceil(prop.marketLine)}+ ${prop.statLabel}`,
+                                        confidence: prop.hitRate,
+                                        match: prop.matchup,
+                                        sport: "AFL",
+                                        odds: prop.bestOdds,
+                                        bookie: prop.bestBookie,
+                                        confidenceSource: "stats",
+                                      }]);
+                                    }
+                                  });
+                                  setTab("builder");
+                                }}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-xs font-semibold rounded-lg transition-colors"
+                              >
+                                Use this →
+                              </button>
+                            </div>
+
+                            {/* Legs */}
+                            <div className="space-y-1.5">
+                              {combo.legs.map((prop) => (
+                                <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2 text-xs">
+                                  <div>
+                                    <span className="text-white font-medium">{prop.playerName}</span>
+                                    <span className="text-gray-400 ml-2">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
+                                    <span className="text-gray-600 ml-2 hidden sm:inline">{prop.matchup.split(" v ")[0]} v {prop.matchup.split(" v ")[1]}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                                    <span className={`font-semibold ${prop.hitRate >= 75 ? "text-green-400" : "text-yellow-400"}`}>
+                                      {prop.hitRate}%
+                                    </span>
+                                    <span className="text-gray-400">${prop.bestOdds}</span>
+                                    <span className="text-green-400 font-semibold">+{prop.edge}%</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                ))}
+
+                <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1.5">
+                  <p>💡 <span className="text-white">Strike rate</span> = probability all legs win, based on historical hit rates.</p>
+                  <p>💡 <span className="text-white">EV per $100</span> = expected profit/loss if you placed this multi 100 times at $100 each.</p>
+                  <p>💡 Hit <span className="text-white">Use this →</span> to send a combo to My Multi for bookie-by-bookie breakdown.</p>
+                </div>
               </>
             )}
           </div>
