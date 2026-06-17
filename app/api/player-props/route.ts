@@ -5,16 +5,25 @@ import { join } from "path";
 const ODDS_API_KEY = "0f0d4c20983592fffeaa6e1b11206ebd";
 const ODDS_BASE = "https://api.the-odds-api.com/v4";
 
+// AFL markets available on The Odds API (tested 2026-06-17)
+// player_goals, player_marks, player_kicks, player_tackles all return INVALID_MARKET
+const MARKETS = [
+  { key: "player_disposals", stat: "disposals", label: "disposals" },
+] as const;
+
+type StatType = "disposals" | "goals" | "marks" | "kicks" | "tackles";
+
 interface ThresholdPoint {
-  threshold: number; // e.g. 22 means "22+ disposals" (>=22)
-  line: number;      // bookmaker notation: 21.5
+  threshold: number;
+  line: number;
   hitRate: number;
 }
 
 interface PlayerProp {
   playerName: string;
   matchup: string;
-  // Main market (from Odds API)
+  statType: StatType;
+  statLabel: string;
   marketLine: number;
   bestOdds: number;
   bestBookie: string;
@@ -24,11 +33,7 @@ interface PlayerProp {
   edge: number;
   seasonAvg: number;
   recentForm: number[];
-  // Multi-threshold analysis
   thresholds: ThresholdPoint[];
-  optimalThreshold: number;
-  optimalHitRate: number;
-  optimalEdge: number;
 }
 
 interface StoredGame {
@@ -60,23 +65,12 @@ function loadPlayerStats(): Record<string, StoredPlayer> {
   }
 }
 
-/**
- * Build hit-rate curve across all integer thresholds.
- * We only have real prices at the main market line, so we don't estimate
- * edge at alternate lines — we just show the hit rates for the user to
- * compare manually against Sportsbet alternate line prices.
- */
-function buildThresholds(
-  values: number[],
-  marketLineFractional: number
-): ThresholdPoint[] {
+function buildThresholds(values: number[], marketLineFractional: number): ThresholdPoint[] {
   const n = values.length;
   if (n === 0) return [];
-
-  const min = Math.max(1, Math.min(...values));
+  const min = Math.max(0, Math.min(...values));
   const max = Math.max(...values);
   const thresholds: ThresholdPoint[] = [];
-
   for (let t = min; t <= max + 1; t++) {
     const hits = values.filter((v) => v >= t).length;
     thresholds.push({
@@ -85,20 +79,16 @@ function buildThresholds(
       hitRate: Math.round((hits / n) * 1000) / 10,
     });
   }
-
   return thresholds;
 }
 
 export async function GET() {
   const stored = loadPlayerStats();
-
   if (Object.keys(stored).length === 0) {
-    return NextResponse.json({
-      props: [],
-      message: "No player stats data yet. Run: node scripts/fetch-player-stats.mjs",
-    });
+    return NextResponse.json({ props: [], message: "No player stats. Run: node scripts/fetch-player-stats.mjs" });
   }
 
+  // Fetch all AFL events
   const eventsRes = await fetch(
     `${ODDS_BASE}/sports/aussierules_afl/events/?apiKey=${ODDS_API_KEY}`,
     { next: { revalidate: 3600 } }
@@ -106,18 +96,23 @@ export async function GET() {
   const events = await eventsRes.json();
   if (!Array.isArray(events)) return NextResponse.json({ props: [] });
 
+  // Build live market lines map: "marketKey:playerName" → best odds entry
   const liveLines = new Map<string, {
     line: number;
     bestOdds: number;
     bestBookie: string;
     matchup: string;
+    statType: StatType;
+    statLabel: string;
   }>();
 
   await Promise.all(
     events.map(async (event: { id: string; home_team: string; away_team: string }) => {
       try {
+        // Request all markets in one call; Odds API silently omits unavailable ones
+        const marketKeys = MARKETS.map((m) => m.key).join(",");
         const res = await fetch(
-          `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=player_disposals&oddsFormat=decimal`,
+          `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=${marketKeys}&oddsFormat=decimal`,
           { next: { revalidate: 3600 } }
         );
         const data = await res.json();
@@ -125,17 +120,22 @@ export async function GET() {
 
         for (const bm of data.bookmakers ?? []) {
           for (const market of bm.markets ?? []) {
-            if (market.key !== "player_disposals") continue;
+            const marketDef = MARKETS.find((m) => m.key === market.key);
+            if (!marketDef) continue;
+
             for (const outcome of market.outcomes ?? []) {
               if (outcome.name !== "Over") continue;
               const name: string = outcome.description;
-              const existing = liveLines.get(name);
+              const mapKey = `${market.key}:${name}`;
+              const existing = liveLines.get(mapKey);
               if (!existing || outcome.price > existing.bestOdds) {
-                liveLines.set(name, {
+                liveLines.set(mapKey, {
                   line: outcome.point,
                   bestOdds: outcome.price,
                   bestBookie: bm.title,
                   matchup,
+                  statType: marketDef.stat,
+                  statLabel: marketDef.label,
                 });
               }
             }
@@ -147,42 +147,49 @@ export async function GET() {
 
   const props: PlayerProp[] = [];
 
-  for (const [playerName, market] of liveLines.entries()) {
+  for (const [mapKey, market] of liveLines.entries()) {
+    const playerName = mapKey.split(":").slice(1).join(":");
     const storedPlayer = stored[playerName];
     if (!storedPlayer || storedPlayer.games.length < 10) continue;
 
-    const disposals = storedPlayer.games.map((g) => g.disposals);
+    // Get the relevant stat array for this market
+    const statValues = storedPlayer.games.map((g) => {
+      const v = (g as Record<string, unknown>)[market.statType];
+      return typeof v === "number" ? v : 0;
+    });
 
-    // Main market stats
-    const hitCount = disposals.filter((d) => d > market.line).length;
-    const hitRate = Math.round((hitCount / disposals.length) * 1000) / 10;
+
+    const n = statValues.length;
+    const hitCount = statValues.filter((v) => v > market.line).length;
+    const hitRate = Math.round((hitCount / n) * 1000) / 10;
     const bookmakerImplied = Math.round((1 / market.bestOdds) * 1000) / 10;
     const edge = Math.round((hitRate - bookmakerImplied) * 10) / 10;
-    const seasonAvg = Math.round((disposals.reduce((a, b) => a + b, 0) / disposals.length) * 10) / 10;
-    const recentForm = disposals.slice(-5);
 
-    const thresholds = buildThresholds(disposals, market.line);
+    // Only include if there's meaningful edge
+    if (edge < 3) continue;
+
+    const seasonAvg = Math.round((statValues.reduce((a, b) => a + b, 0) / n) * 100) / 100;
+    const recentForm = statValues.slice(-5);
+    const thresholds = buildThresholds(statValues, market.line);
 
     props.push({
       playerName,
       matchup: market.matchup,
+      statType: market.statType,
+      statLabel: market.statLabel,
       marketLine: market.line,
       bestOdds: market.bestOdds,
       bestBookie: market.bestBookie,
-      gamesAnalysed: disposals.length,
+      gamesAnalysed: n,
       hitRate,
       bookmakerImplied,
       edge,
       seasonAvg,
       recentForm,
       thresholds,
-      optimalThreshold: Math.ceil(market.line),
-      optimalHitRate: hitRate,
-      optimalEdge: edge,
     });
   }
 
   props.sort((a, b) => b.edge - a.edge);
-
   return NextResponse.json({ props });
 }

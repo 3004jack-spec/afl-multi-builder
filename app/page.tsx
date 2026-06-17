@@ -58,6 +58,8 @@ interface ThresholdPoint {
 interface PlayerProp {
   playerName: string;
   matchup: string;
+  statType: string;
+  statLabel: string;
   marketLine: number;
   bestOdds: number;
   bestBookie: string;
@@ -68,9 +70,6 @@ interface PlayerProp {
   recentForm: number[];
   seasonAvg: number;
   thresholds: ThresholdPoint[];
-  optimalThreshold: number;
-  optimalHitRate: number;
-  optimalEdge: number;
 }
 
 function formatTime(iso: string) {
@@ -88,6 +87,7 @@ export default function Home() {
   const [multi, setMulti] = useState<MultiLeg[]>([]);
   const [props, setProps] = useState<PlayerProp[]>([]);
   const [expandedProp, setExpandedProp] = useState<string | null>(null);
+  const [statFilter, setStatFilter] = useState<"all" | "disposals" | "goals" | "marks" | "kicks" | "tackles">("all");
   const [propsLoading, setPropsLoading] = useState(false);
   const [propsLoaded, setPropsLoaded] = useState(false);
   const [edgeFilter, setEdgeFilter] = useState<number>(10);
@@ -450,7 +450,22 @@ export default function Home() {
             ) : propsLoaded ? (
               <>
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
-                  <p>📊 Real hit rates vs bookmaker lines — backed by 3 seasons of AFL Tables data. Only showing players with genuine edge.</p>
+                  <p>📊 Real hit rates vs bookmaker lines — backed by 3+ seasons of AFL Tables data. Only showing players with genuine edge.</p>
+                </div>
+
+                {/* Stat type filter */}
+                <div className="flex gap-1 flex-wrap">
+                  {(["all", "disposals", "goals", "marks", "kicks", "tackles"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setStatFilter(s)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                        statFilter === s ? "bg-blue-500 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      }`}
+                    >
+                      {s === "all" ? "All markets" : s}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Edge filter */}
@@ -470,13 +485,13 @@ export default function Home() {
                 </div>
 
                 <p className="text-gray-500 text-xs">
-                  {props.filter((p) => p.edge >= edgeFilter).length} players with {edgeFilter}%+ edge · Tap to add to multi
+                  {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).length} bets · {edgeFilter}%+ edge · Tap to add to multi
                 </p>
 
-                {props.filter((p) => p.edge >= edgeFilter).map((prop) => {
-                  const propId = `prop-${prop.playerName}`;
+                {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).map((prop) => {
+                  const propId = `prop-${prop.playerName}-${prop.statType}`;
                   const inMulti = !!multi.find((l) => l.id === propId);
-                  const isExpanded = expandedProp === prop.playerName;
+                  const isExpanded = expandedProp === propId;
                   const marketThreshold = Math.ceil(prop.marketLine);
 
                   // 9 thresholds centred on the market line
@@ -496,7 +511,14 @@ export default function Home() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded font-semibold">AFL</span>
-                              <span className="text-xs bg-purple-900 text-purple-300 px-1.5 py-0.5 rounded">Stats backed</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded font-semibold capitalize ${
+                                prop.statType === "disposals" ? "bg-purple-900 text-purple-300" :
+                                prop.statType === "goals" ? "bg-orange-900 text-orange-300" :
+                                prop.statType === "marks" ? "bg-cyan-900 text-cyan-300" :
+                                "bg-gray-700 text-gray-300"
+                              }`}>
+                                {prop.statLabel}
+                              </span>
                               {inMulti && <span className="text-xs bg-green-500 text-black px-1.5 py-0.5 rounded font-bold">IN MULTI ✓</span>}
                             </div>
                             <div className="font-semibold text-white text-sm">{prop.playerName}</div>
@@ -505,7 +527,7 @@ export default function Home() {
                             {/* Market line */}
                             <div className="mt-2 bg-gray-800 rounded-lg px-3 py-2">
                               <div className="font-bold text-white text-sm">
-                                {marketThreshold}+ disposals
+                                {marketThreshold}+ {prop.statLabel}
                                 <span className="ml-2 font-normal text-xs text-gray-400">
                                   (line {prop.marketLine})
                                 </span>
@@ -517,7 +539,7 @@ export default function Home() {
 
                             {/* Recent form */}
                             <div className="flex items-center gap-1 mt-2">
-                              <span className="text-gray-500 text-xs mr-1">Last 5:</span>
+                              <span className="text-gray-500 text-xs mr-1">Last 5 {prop.statLabel}:</span>
                               {prop.recentForm.map((d, i) => (
                                 <span
                                   key={i}
@@ -551,7 +573,7 @@ export default function Home() {
                                 if (multi.length >= 8) return;
                                 setMulti([...multi, {
                                   id: propId,
-                                  tip: `${prop.playerName} ${marketThreshold}+ disposals`,
+                                  tip: `${prop.playerName} ${marketThreshold}+ ${prop.statLabel}`,
                                   confidence: prop.hitRate,
                                   match: prop.matchup,
                                   sport: "AFL",
@@ -568,7 +590,7 @@ export default function Home() {
                             {inMulti ? "Remove from multi" : "+ Add to multi"}
                           </button>
                           <button
-                            onClick={() => setExpandedProp(isExpanded ? null : prop.playerName)}
+                            onClick={() => setExpandedProp(isExpanded ? null : propId)}
                             className="px-4 py-2 rounded-lg text-xs font-semibold bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
                           >
                             {isExpanded ? "Hide ▲" : "Thresholds ▼"}
@@ -593,7 +615,7 @@ export default function Home() {
                                   }`}
                                 >
                                   <span className="text-white">
-                                    {t.threshold}+ disposals
+                                    {t.threshold}+ {prop.statLabel}
                                     {isMarket && <span className="text-green-400 ml-2 text-xs font-normal">← market line (priced)</span>}
                                   </span>
                                   <span className={`font-semibold ${t.hitRate >= 75 ? "text-green-400" : t.hitRate >= 65 ? "text-yellow-400" : "text-gray-400"}`}>
