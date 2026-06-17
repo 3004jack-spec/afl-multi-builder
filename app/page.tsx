@@ -55,6 +55,16 @@ interface ThresholdPoint {
   hitRate: number;
 }
 
+interface PricedLine {
+  line: number;
+  bookmakerOdds: Record<string, number>;
+  bestOdds: number;
+  bestBookie: string;
+  hitRate: number;
+  bookmakerImplied: number;
+  edge: number;
+}
+
 interface PlayerProp {
   playerName: string;
   matchup: string;
@@ -64,6 +74,8 @@ interface PlayerProp {
   bestOdds: number;
   bestBookie: string;
   bookmakerOdds: Record<string, number>;
+  isAlternateLine: boolean;
+  allPricedLines: PricedLine[];
   gamesAnalysed: number;
   hitRate: number;
   bookmakerImplied: number;
@@ -772,18 +784,24 @@ export default function Home() {
                               }`}>
                                 {prop.statLabel}
                               </span>
+                              {prop.isAlternateLine && (
+                                <span className="text-xs bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-semibold">
+                                  ALT LINE ★
+                                </span>
+                              )}
                               {inMulti && <span className="text-xs bg-green-500 text-black px-1.5 py-0.5 rounded font-bold">IN MULTI ✓</span>}
                             </div>
                             <div className="font-semibold text-white text-sm">{prop.playerName}</div>
                             <div className="text-gray-400 text-xs mt-0.5">{prop.matchup}</div>
 
-                            {/* Market line */}
+                            {/* Best line (selected for edge) */}
                             <div className="mt-2 bg-gray-800 rounded-lg px-3 py-2">
-                              <div className="font-bold text-white text-sm">
-                                {marketThreshold}+ {prop.statLabel}
-                                <span className="ml-2 font-normal text-xs text-gray-400">
-                                  (line {prop.marketLine})
-                                </span>
+                              <div className="flex items-center justify-between">
+                                <div className="font-bold text-white text-sm">
+                                  {marketThreshold}+ {prop.statLabel}
+                                  <span className="ml-2 font-normal text-xs text-gray-400">(line {prop.marketLine})</span>
+                                </div>
+                                <span className="text-green-400 text-xs font-semibold">+{prop.edge}% edge</span>
                               </div>
                               <div className="text-gray-500 text-xs mt-0.5">
                                 Best: ${prop.bestOdds} @ {prop.bestBookie} · {prop.bookmakerImplied}% implied
@@ -792,20 +810,34 @@ export default function Home() {
                               {bookieEntries.length > 1 && (
                                 <div className="flex flex-wrap gap-1 mt-1.5">
                                   {bookieEntries.map(([bk, odds]) => (
-                                    <span
-                                      key={bk}
-                                      className={`text-xs px-1.5 py-0.5 rounded ${
-                                        bk === prop.bestBookie
-                                          ? "bg-green-800 text-green-200 font-semibold"
-                                          : "bg-gray-700 text-gray-400"
-                                      }`}
-                                    >
+                                    <span key={bk} className={`text-xs px-1.5 py-0.5 rounded ${bk === prop.bestBookie ? "bg-green-800 text-green-200 font-semibold" : "bg-gray-700 text-gray-400"}`}>
                                       {bk} ${odds}
                                     </span>
                                   ))}
                                 </div>
                               )}
                             </div>
+
+                            {/* All priced lines (if alternate lines exist) */}
+                            {prop.allPricedLines.length > 1 && (
+                              <div className="mt-1.5 space-y-1">
+                                {prop.allPricedLines.map((pl) => {
+                                  const isBest = pl.line === prop.marketLine;
+                                  return (
+                                    <div key={pl.line} className={`flex items-center justify-between text-xs rounded px-2.5 py-1 ${isBest ? "bg-orange-950 border border-orange-800" : "bg-gray-850 border border-gray-800"}`}>
+                                      <span className={isBest ? "text-orange-300 font-semibold" : "text-gray-400"}>
+                                        {Math.ceil(pl.line)}+ {prop.statLabel} @ ${pl.bestOdds} ({pl.bestBookie})
+                                        {isBest && <span className="ml-1 text-orange-400">← best edge</span>}
+                                      </span>
+                                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                                        <span className={pl.hitRate >= 75 ? "text-green-400" : pl.hitRate >= 65 ? "text-yellow-400" : "text-gray-400"}>{pl.hitRate}%</span>
+                                        <span className={`font-semibold ${pl.edge >= 10 ? "text-green-400" : pl.edge >= 0 ? "text-yellow-400" : "text-red-400"}`}>{pl.edge >= 0 ? "+" : ""}{pl.edge}%</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
 
                             {/* Recent form */}
                             <div className="flex items-center gap-1 mt-2">
@@ -872,7 +904,7 @@ export default function Home() {
                       {isExpanded && displayThresholds.length > 0 && (
                         <div className="border-t border-gray-800 px-4 pb-4 pt-3">
                           <div className="text-xs text-gray-500 mb-2">
-                            Hit rate at each threshold — check bookmaker alternate lines for matching odds
+                            Recency-weighted hit rate — recent games count more than 2023/24 data
                           </div>
                           <div className="space-y-1">
                             {displayThresholds.map((t) => {
@@ -896,7 +928,7 @@ export default function Home() {
                             })}
                           </div>
                           <div className="text-gray-600 text-xs mt-2">
-                            Edge calculated at market line only. Use hit rates above to find value on alternate lines.
+                            Hit rates are recency-weighted (half-life 20 games). Edge shown where real bookmaker prices exist.
                           </div>
                         </div>
                       )}
