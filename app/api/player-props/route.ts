@@ -27,6 +27,7 @@ interface PlayerProp {
   marketLine: number;
   bestOdds: number;
   bestBookie: string;
+  bookmakerOdds: Record<string, number>;
   gamesAnalysed: number;
   hitRate: number;
   bookmakerImplied: number;
@@ -65,7 +66,7 @@ function loadPlayerStats(): Record<string, StoredPlayer> {
   }
 }
 
-function buildThresholds(values: number[], marketLineFractional: number): ThresholdPoint[] {
+function buildThresholds(values: number[]): ThresholdPoint[] {
   const n = values.length;
   if (n === 0) return [];
   const min = Math.max(0, Math.min(...values));
@@ -96,11 +97,12 @@ export async function GET() {
   const events = await eventsRes.json();
   if (!Array.isArray(events)) return NextResponse.json({ props: [] });
 
-  // Build live market lines map: "marketKey:playerName" → best odds entry
+  // Build live market lines map: "marketKey:playerName" → all bookmaker odds
   const liveLines = new Map<string, {
     line: number;
     bestOdds: number;
     bestBookie: string;
+    bookmakerOdds: Record<string, number>;
     matchup: string;
     statType: StatType;
     statLabel: string;
@@ -109,7 +111,6 @@ export async function GET() {
   await Promise.all(
     events.map(async (event: { id: string; home_team: string; away_team: string }) => {
       try {
-        // Request all markets in one call; Odds API silently omits unavailable ones
         const marketKeys = MARKETS.map((m) => m.key).join(",");
         const res = await fetch(
           `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=${marketKeys}&oddsFormat=decimal`,
@@ -128,15 +129,22 @@ export async function GET() {
               const name: string = outcome.description;
               const mapKey = `${market.key}:${name}`;
               const existing = liveLines.get(mapKey);
-              if (!existing || outcome.price > existing.bestOdds) {
+              if (!existing) {
                 liveLines.set(mapKey, {
                   line: outcome.point,
                   bestOdds: outcome.price,
                   bestBookie: bm.title,
+                  bookmakerOdds: { [bm.title]: outcome.price },
                   matchup,
                   statType: marketDef.stat,
                   statLabel: marketDef.label,
                 });
+              } else {
+                existing.bookmakerOdds[bm.title] = outcome.price;
+                if (outcome.price > existing.bestOdds) {
+                  existing.bestOdds = outcome.price;
+                  existing.bestBookie = bm.title;
+                }
               }
             }
           }
@@ -152,12 +160,10 @@ export async function GET() {
     const storedPlayer = stored[playerName];
     if (!storedPlayer || storedPlayer.games.length < 10) continue;
 
-    // Get the relevant stat array for this market
     const statValues = storedPlayer.games.map((g) => {
       const v = (g as unknown as Record<string, unknown>)[market.statType];
       return typeof v === "number" ? v : 0;
     });
-
 
     const n = statValues.length;
     const hitCount = statValues.filter((v) => v > market.line).length;
@@ -165,12 +171,11 @@ export async function GET() {
     const bookmakerImplied = Math.round((1 / market.bestOdds) * 1000) / 10;
     const edge = Math.round((hitRate - bookmakerImplied) * 10) / 10;
 
-    // Only include if there's meaningful edge
     if (edge < 3) continue;
 
     const seasonAvg = Math.round((statValues.reduce((a, b) => a + b, 0) / n) * 100) / 100;
     const recentForm = statValues.slice(-5);
-    const thresholds = buildThresholds(statValues, market.line);
+    const thresholds = buildThresholds(statValues);
 
     props.push({
       playerName,
@@ -180,6 +185,7 @@ export async function GET() {
       marketLine: market.line,
       bestOdds: market.bestOdds,
       bestBookie: market.bestBookie,
+      bookmakerOdds: market.bookmakerOdds,
       gamesAnalysed: n,
       hitRate,
       bookmakerImplied,

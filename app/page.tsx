@@ -63,6 +63,7 @@ interface PlayerProp {
   marketLine: number;
   bestOdds: number;
   bestBookie: string;
+  bookmakerOdds: Record<string, number>;
   gamesAnalysed: number;
   hitRate: number;
   bookmakerImplied: number;
@@ -70,6 +71,14 @@ interface PlayerProp {
   recentForm: number[];
   seasonAvg: number;
   thresholds: ThresholdPoint[];
+}
+
+interface AutoMultiCombo {
+  legs: PlayerProp[];
+  combinedOdds: number;
+  strikeRate: number;
+  ev100: number;
+  bookie: string;
 }
 
 function formatTime(iso: string) {
@@ -93,6 +102,7 @@ export default function Home() {
   const [edgeFilter, setEdgeFilter] = useState<number>(10);
   const [sportFilter, setSportFilter] = useState<"ALL" | "AFL" | "NRL">("ALL");
   const [confFilter, setConfFilter] = useState<number>(70);
+  const [bookieFilter, setBookieFilter] = useState<string>("Best odds");
 
   useEffect(() => {
     fetch("/api/backtest")
@@ -137,40 +147,52 @@ export default function Home() {
     ? Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 100) / 100
     : 0;
 
-  // Best Bets: all combinations 1–6 legs, unified list sorted by EV
-  interface AutoMultiCombo {
-    legs: PlayerProp[];
-    combinedOdds: number;
-    strikeRate: number;
-    ev100: number;
-    evPct: number; // ev100 / 100 as a percentage
+  // Derive sorted list of bookmakers from props
+  function getAvailableBookies(propList: PlayerProp[]): string[] {
+    const counts: Record<string, number> = {};
+    for (const p of propList) {
+      for (const bk of Object.keys(p.bookmakerOdds)) {
+        counts[bk] = (counts[bk] ?? 0) + 1;
+      }
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
   }
 
-  function buildAllCombos(pool: PlayerProp[], maxLegs = 6, topN = 20): AutoMultiCombo[] {
+  // Build combos for a specific bookmaker (or best-odds across all)
+  function buildAllCombos(pool: PlayerProp[], selectedBookie: string, maxLegs = 6, topN = 20): AutoMultiCombo[] {
+    // Filter to players that have odds at the selected bookmaker (or all for best-odds mode)
+    const eligible = selectedBookie === "Best odds"
+      ? pool
+      : pool.filter((p) => p.bookmakerOdds[selectedBookie] !== undefined);
+
     const allResults: AutoMultiCombo[] = [];
 
-    for (let legCount = 1; legCount <= Math.min(maxLegs, pool.length); legCount++) {
+    for (let legCount = 1; legCount <= Math.min(maxLegs, eligible.length); legCount++) {
       const results: AutoMultiCombo[] = [];
 
       function combine(start: number, current: PlayerProp[]) {
         if (current.length === legCount) {
-          const combinedOdds = Math.round(current.reduce((a, p) => a * p.bestOdds, 1) * 100) / 100;
+          // Use selected bookie's odds, or best odds if "Best odds" mode
+          const legOdds = current.map((p) =>
+            selectedBookie === "Best odds" ? p.bestOdds : (p.bookmakerOdds[selectedBookie] ?? p.bestOdds)
+          );
+          const combinedOdds = Math.round(legOdds.reduce((a, o) => a * o, 1) * 100) / 100;
           const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate / 100), 1) * 1000) / 10;
           const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
-          const evPct = Math.round(ev100) ; // EV as % of stake
-          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, evPct });
+          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, bookie: selectedBookie });
           return;
         }
-        for (let i = start; i < pool.length; i++) {
-          if (current.some((p) => p.playerName === pool[i].playerName)) continue;
-          current.push(pool[i]);
+        for (let i = start; i < eligible.length; i++) {
+          if (current.some((p) => p.playerName === eligible[i].playerName)) continue;
+          current.push(eligible[i]);
           combine(i + 1, current);
           current.pop();
         }
       }
 
       combine(0, []);
-      // Keep top 3 per leg count to avoid flooding the list
       results.sort((a, b) => b.ev100 - a.ev100);
       allResults.push(...results.slice(0, 3));
     }
@@ -180,7 +202,8 @@ export default function Home() {
 
   // Pool: all props with any positive edge, capped at 12 for perf
   const autoPool = props.filter((p) => p.edge > 0).slice(0, 12);
-  const allCombos = buildAllCombos(autoPool);
+  const availableBookies = ["Best odds", ...getAvailableBookies(autoPool)];
+  const allCombos = buildAllCombos(autoPool, bookieFilter);
 
   const filteredGames = games.filter((g) => {
     const conf = g.squiggleConfidence ?? g.impliedWinPct;
@@ -407,105 +430,146 @@ export default function Home() {
                 <p className="font-medium text-white">Auto Multi</p>
                 <p className="text-sm mt-1 mb-4">Generates the highest EV combinations from all current player props.</p>
               </div>
-            ) : autoPool.length < 3 ? (
+            ) : autoPool.length < 2 ? (
               <div className="text-center py-12 text-gray-400">
                 <p className="font-medium text-white">Not enough qualifying props</p>
-                <p className="text-sm mt-1">Need at least 3 players with 10%+ edge. Try again closer to game day.</p>
+                <p className="text-sm mt-1">Need at least 2 players with positive edge. Try again closer to game day.</p>
               </div>
             ) : (
               <>
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
-                  <p>All bets ranked purely by Expected Value — singles, doubles, multis. The math decides the structure. Pool: {autoPool.length} qualifying props.</p>
+                  <p>All bets ranked purely by Expected Value. Select a bookmaker to see only legs placeable at that one provider — required for same-game multis.</p>
                 </div>
 
-                <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-800 grid grid-cols-4 text-xs text-gray-500 font-medium">
-                    <span>Bet</span>
-                    <span className="text-center">Strike rate</span>
-                    <span className="text-center">Odds</span>
-                    <span className="text-right">EV / $100</span>
+                {/* Bookmaker filter */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-2">Place multi at:</div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {availableBookies.map((bk) => (
+                      <button
+                        key={bk}
+                        onClick={() => setBookieFilter(bk)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          bookieFilter === bk
+                            ? "bg-green-500 text-black"
+                            : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                        }`}
+                      >
+                        {bk}
+                      </button>
+                    ))}
                   </div>
-                  <div className="divide-y divide-gray-800">
-                    {allCombos.map((combo, idx) => {
-                      const legCount = combo.legs.length;
-                      const label = legCount === 1 ? "Single" : `${legCount}-leg multi`;
-                      return (
-                        <div key={idx} className="p-4">
-                          {/* Header row */}
-                          <div className="grid grid-cols-4 items-center mb-3">
-                            <div>
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                                legCount === 1 ? "bg-green-900 text-green-300" :
-                                legCount <= 3 ? "bg-blue-900 text-blue-300" :
-                                "bg-purple-900 text-purple-300"
-                              }`}>
-                                {label}
-                              </span>
-                            </div>
-                            <div className="text-center">
-                              <span className={`font-bold text-sm ${combo.strikeRate >= 60 ? "text-green-400" : combo.strikeRate >= 35 ? "text-yellow-400" : "text-orange-400"}`}>
-                                {combo.strikeRate}%
-                              </span>
-                            </div>
-                            <div className="text-center">
-                              <span className="font-bold text-sm text-white">${combo.combinedOdds}</span>
-                            </div>
-                            <div className="text-right">
-                              <span className={`font-bold text-sm ${combo.ev100 >= 0 ? "text-green-400" : "text-red-400"}`}>
-                                {combo.ev100 >= 0 ? "+" : ""}${combo.ev100}
-                              </span>
-                            </div>
-                          </div>
+                  {bookieFilter !== "Best odds" && (
+                    <p className="text-xs text-yellow-400 mt-2">
+                      Showing only legs available at {bookieFilter} — all legs placeable as one multi.
+                    </p>
+                  )}
+                </div>
 
-                          {/* Legs */}
-                          <div className="space-y-1 mb-3">
-                            {combo.legs.map((prop) => (
-                              <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded px-3 py-1.5 text-xs">
-                                <div className="flex-1 min-w-0">
-                                  <span className="text-white font-medium">{prop.playerName}</span>
-                                  <span className="text-gray-400 ml-1.5">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0 ml-2">
-                                  <span className={`font-semibold ${prop.hitRate >= 75 ? "text-green-400" : "text-yellow-400"}`}>{prop.hitRate}%</span>
-                                  <span className="text-gray-500">${prop.bestOdds}</span>
-                                  <span className="text-gray-500 text-xs">{prop.bestBookie}</span>
-                                </div>
+                {allCombos.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <p className="font-medium text-white">No qualifying legs at {bookieFilter}</p>
+                    <p className="text-sm mt-1">Try a different bookmaker or switch to Best odds.</p>
+                  </div>
+                ) : (
+                  <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-800 grid grid-cols-4 text-xs text-gray-500 font-medium">
+                      <span>Bet</span>
+                      <span className="text-center">Strike rate</span>
+                      <span className="text-center">Odds</span>
+                      <span className="text-right">EV / $100</span>
+                    </div>
+                    <div className="divide-y divide-gray-800">
+                      {allCombos.map((combo, idx) => {
+                        const legCount = combo.legs.length;
+                        const label = legCount === 1 ? "Single" : `${legCount}-leg multi`;
+                        return (
+                          <div key={idx} className="p-4">
+                            {/* Header row */}
+                            <div className="grid grid-cols-4 items-center mb-3">
+                              <div>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                                  legCount === 1 ? "bg-green-900 text-green-300" :
+                                  legCount <= 3 ? "bg-blue-900 text-blue-300" :
+                                  "bg-purple-900 text-purple-300"
+                                }`}>
+                                  {label}
+                                </span>
                               </div>
-                            ))}
-                          </div>
+                              <div className="text-center">
+                                <span className={`font-bold text-sm ${combo.strikeRate >= 60 ? "text-green-400" : combo.strikeRate >= 35 ? "text-yellow-400" : "text-orange-400"}`}>
+                                  {combo.strikeRate}%
+                                </span>
+                              </div>
+                              <div className="text-center">
+                                <span className="font-bold text-sm text-white">${combo.combinedOdds}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className={`font-bold text-sm ${combo.ev100 >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                  {combo.ev100 >= 0 ? "+" : ""}${combo.ev100}
+                                </span>
+                              </div>
+                            </div>
 
-                          <button
-                            onClick={() => {
-                              setMulti([]);
-                              combo.legs.forEach((prop) => {
-                                const propId = `prop-${prop.playerName}-${prop.statType}`;
-                                setMulti((prev) => [...prev, {
-                                  id: propId,
-                                  tip: `${prop.playerName} ${Math.ceil(prop.marketLine)}+ ${prop.statLabel}`,
-                                  confidence: prop.hitRate,
-                                  match: prop.matchup,
-                                  sport: "AFL",
-                                  odds: prop.bestOdds,
-                                  bookie: prop.bestBookie,
-                                  confidenceSource: "stats",
-                                }]);
-                              });
-                              setTab("builder");
-                            }}
-                            className="w-full py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-colors"
-                          >
-                            Use this bet →
-                          </button>
-                        </div>
-                      );
-                    })}
+                            {/* Legs */}
+                            <div className="space-y-1 mb-3">
+                              {combo.legs.map((prop) => {
+                                const legOdds = bookieFilter === "Best odds"
+                                  ? prop.bestOdds
+                                  : (prop.bookmakerOdds[bookieFilter] ?? prop.bestOdds);
+                                const legBookie = bookieFilter === "Best odds" ? prop.bestBookie : bookieFilter;
+                                return (
+                                  <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded px-3 py-1.5 text-xs">
+                                    <div className="flex-1 min-w-0">
+                                      <span className="text-white font-medium">{prop.playerName}</span>
+                                      <span className="text-gray-400 ml-1.5">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                                      <span className={`font-semibold ${prop.hitRate >= 75 ? "text-green-400" : "text-yellow-400"}`}>{prop.hitRate}%</span>
+                                      <span className="text-gray-500">${legOdds}</span>
+                                      <span className="text-gray-500 text-xs">{legBookie}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <button
+                              onClick={() => {
+                                const newLegs = combo.legs.map((prop) => {
+                                  const legOdds = bookieFilter === "Best odds"
+                                    ? prop.bestOdds
+                                    : (prop.bookmakerOdds[bookieFilter] ?? prop.bestOdds);
+                                  const legBookie = bookieFilter === "Best odds" ? prop.bestBookie : bookieFilter;
+                                  return {
+                                    id: `prop-${prop.playerName}-${prop.statType}`,
+                                    tip: `${prop.playerName} ${Math.ceil(prop.marketLine)}+ ${prop.statLabel}`,
+                                    confidence: prop.hitRate,
+                                    match: prop.matchup,
+                                    sport: "AFL" as const,
+                                    odds: legOdds,
+                                    bookie: legBookie,
+                                    confidenceSource: "stats" as const,
+                                  };
+                                });
+                                setMulti(newLegs);
+                                setTab("builder");
+                              }}
+                              className="w-full py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-colors"
+                            >
+                              {bookieFilter === "Best odds" ? "Use this bet →" : `Place at ${bookieFilter} →`}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1.5">
-                  <p><span className="text-white">EV / $100</span> = expected profit per $100 staked, long run. +$56 on a single means you profit $56 for every $100 bet on average.</p>
-                  <p><span className="text-white">Strike rate</span> = how often this bet wins. A single at 83% wins 5 of every 6. A 6-leg at 17% wins roughly 1 in 6.</p>
-                  <p>Higher EV multi ≠ better — higher variance means longer losing runs. Size stakes accordingly.</p>
+                  <p><span className="text-white">EV / $100</span> = expected profit per $100 staked, long run.</p>
+                  <p><span className="text-white">Strike rate</span> = how often this bet wins based on historical hit rates.</p>
+                  <p><span className="text-white">Same-bookmaker rule:</span> select one bookmaker above — all legs in a multi must be placed at the same provider.</p>
                 </div>
               </>
             )}
@@ -519,16 +583,30 @@ export default function Home() {
               <div className="text-center py-16 text-gray-400">
                 <div className="text-4xl mb-3">🏈</div>
                 <p className="font-medium text-white">No legs added yet</p>
-                <p className="text-sm mt-1">Go to <strong>Live Odds</strong> and tap games to add them.</p>
+                <p className="text-sm mt-1">Go to <strong>Auto Multi</strong> to generate bets, or <strong>Live Odds</strong> to add match legs.</p>
                 <button
-                  onClick={() => setTab("live")}
+                  onClick={() => setTab("auto")}
                   className="mt-4 bg-green-500 text-black font-semibold px-5 py-2 rounded-lg text-sm"
                 >
-                  Browse Live Odds →
+                  Generate Auto Multi →
                 </button>
               </div>
             ) : (
               <>
+                {/* Bookmaker consistency warning */}
+                {(() => {
+                  const bookies = [...new Set(multi.map((l) => l.bookie))];
+                  return bookies.length > 1 ? (
+                    <div className="bg-yellow-950 border border-yellow-700 rounded-xl p-3 text-sm text-yellow-300">
+                      ⚠️ Legs from multiple bookmakers ({bookies.join(", ")}). For a same-game multi, all legs must be at one provider — go to Auto Multi and select a specific bookmaker.
+                    </div>
+                  ) : (
+                    <div className="bg-green-950 border border-green-800 rounded-xl p-3 text-xs text-green-400">
+                      ✓ All legs at {bookies[0]} — placeable as a single multi.
+                    </div>
+                  );
+                })()}
+
                 {/* Summary */}
                 <div className="bg-green-950 border border-green-800 rounded-xl p-4">
                   <div className="grid grid-cols-3 gap-3 text-center">
@@ -570,7 +648,7 @@ export default function Home() {
                           </div>
                           <div className="font-medium text-sm">{leg.tip}</div>
                           <div className="text-gray-400 text-xs">{leg.match}</div>
-                          <div className="text-gray-500 text-xs mt-0.5">Best odds @ {leg.bookie}</div>
+                          <div className="text-gray-500 text-xs mt-0.5">@ {leg.bookie}</div>
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="text-right">
@@ -590,7 +668,7 @@ export default function Home() {
                 </div>
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1">
-                  <p>💡 Place each leg at the bookmaker shown for best odds.</p>
+                  <p>💡 All legs must be at the same bookmaker for a same-game multi.</p>
                   <p>💡 Check for multi insurance promos before placing.</p>
                 </div>
               </>
@@ -665,6 +743,9 @@ export default function Home() {
                     (t) => t.threshold >= marketThreshold - 4 && t.threshold <= marketThreshold + 4
                   );
 
+                  // Bookmaker odds summary
+                  const bookieEntries = Object.entries(prop.bookmakerOdds).sort((a, b) => b[1] - a[1]);
+
                   return (
                     <div
                       key={prop.playerName}
@@ -699,8 +780,25 @@ export default function Home() {
                                 </span>
                               </div>
                               <div className="text-gray-500 text-xs mt-0.5">
-                                ${prop.bestOdds} @ {prop.bestBookie} · {prop.bookmakerImplied}% implied
+                                Best: ${prop.bestOdds} @ {prop.bestBookie} · {prop.bookmakerImplied}% implied
                               </div>
+                              {/* Per-bookie odds */}
+                              {bookieEntries.length > 1 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {bookieEntries.map(([bk, odds]) => (
+                                    <span
+                                      key={bk}
+                                      className={`text-xs px-1.5 py-0.5 rounded ${
+                                        bk === prop.bestBookie
+                                          ? "bg-green-800 text-green-200 font-semibold"
+                                          : "bg-gray-700 text-gray-400"
+                                      }`}
+                                    >
+                                      {bk} ${odds}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
 
                             {/* Recent form */}
@@ -768,7 +866,7 @@ export default function Home() {
                       {isExpanded && displayThresholds.length > 0 && (
                         <div className="border-t border-gray-800 px-4 pb-4 pt-3">
                           <div className="text-xs text-gray-500 mb-2">
-                            Hit rate at each threshold — check Sportsbet alternate lines for matching odds
+                            Hit rate at each threshold — check bookmaker alternate lines for matching odds
                           </div>
                           <div className="space-y-1">
                             {displayThresholds.map((t) => {
