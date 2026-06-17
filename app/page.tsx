@@ -78,6 +78,7 @@ interface AutoMultiCombo {
   combinedOdds: number;
   strikeRate: number;
   ev100: number;
+  kelly: number; // Kelly fraction × 100 — optimal bankroll % to bet for long-term growth
   bookie: string;
 }
 
@@ -181,7 +182,11 @@ export default function Home() {
           const combinedOdds = Math.round(legOdds.reduce((a, o) => a * o, 1) * 100) / 100;
           const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate / 100), 1) * 1000) / 10;
           const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
-          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, bookie: selectedBookie });
+          // Kelly fraction = EV / (combinedOdds - 1) — optimal bankroll % for log-growth
+          const kelly = combinedOdds > 1
+            ? Math.round(((strikeRate / 100) * combinedOdds - 1) / (combinedOdds - 1) * 1000) / 10
+            : 0;
+          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, kelly, bookie: selectedBookie });
           return;
         }
         for (let i = start; i < eligible.length; i++) {
@@ -193,11 +198,11 @@ export default function Home() {
       }
 
       combine(0, []);
-      results.sort((a, b) => b.ev100 - a.ev100);
+      results.sort((a, b) => b.kelly - a.kelly);
       allResults.push(...results.slice(0, 3));
     }
 
-    return allResults.sort((a, b) => b.ev100 - a.ev100).slice(0, topN);
+    return allResults.sort((a, b) => b.kelly - a.kelly).slice(0, topN);
   }
 
   // Pool: all props with any positive edge, capped at 12 for perf
@@ -477,7 +482,7 @@ export default function Home() {
                       <span>Bet</span>
                       <span className="text-center">Strike rate</span>
                       <span className="text-center">Odds</span>
-                      <span className="text-right">EV / $100</span>
+                      <span className="text-right">Edge score</span>
                     </div>
                     <div className="divide-y divide-gray-800">
                       {allCombos.map((combo, idx) => {
@@ -505,9 +510,10 @@ export default function Home() {
                                 <span className="font-bold text-sm text-white">${combo.combinedOdds}</span>
                               </div>
                               <div className="text-right">
-                                <span className={`font-bold text-sm ${combo.ev100 >= 0 ? "text-green-400" : "text-red-400"}`}>
-                                  {combo.ev100 >= 0 ? "+" : ""}${combo.ev100}
+                                <span className={`font-bold text-sm ${combo.kelly >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                  {combo.kelly >= 0 ? "+" : ""}{combo.kelly}%
                                 </span>
+                                <div className="text-gray-600 text-xs">{combo.ev100 >= 0 ? "+" : ""}${combo.ev100} EV</div>
                               </div>
                             </div>
 
@@ -567,8 +573,8 @@ export default function Home() {
                 )}
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1.5">
-                  <p><span className="text-white">EV / $100</span> = expected profit per $100 staked, long run.</p>
-                  <p><span className="text-white">Strike rate</span> = how often this bet wins based on historical hit rates.</p>
+                  <p><span className="text-white">Edge score</span> = Kelly fraction — how hard you&apos;re beating the bookmaker relative to the risk taken. Higher = better long-term growth regardless of leg count.</p>
+                  <p><span className="text-white">EV / $100</span> = raw profit per $100, shown as context only. Not used for ranking — a big EV on a low-probability multi is misleading.</p>
                   <p><span className="text-white">Same-bookmaker rule:</span> select one bookmaker above — all legs in a multi must be placed at the same provider.</p>
                 </div>
               </>
