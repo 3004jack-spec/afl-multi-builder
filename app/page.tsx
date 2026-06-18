@@ -126,6 +126,16 @@ export default function Home() {
   const [emergencyPlayers, setEmergencyPlayers] = useState<Set<string>>(new Set());
   const [lineupsLoaded, setLineupsLoaded] = useState(false);
 
+  // Manual multi evaluator state
+  const [manualSearch, setManualSearch] = useState("");
+  const [manualSuggestions, setManualSuggestions] = useState<string[]>([]);
+  const [manualPlayer, setManualPlayer] = useState("");
+  const [manualStat, setManualStat] = useState<"disposals"|"kicks"|"marks"|"handballs"|"tackles"|"clearances"|"goals">("disposals");
+  const [manualThreshold, setManualThreshold] = useState("");
+  const [manualOdds, setManualOdds] = useState("");
+  const [manualLookup, setManualLookup] = useState<null | { found: boolean; hitRate5: number; hitRate10: number; allTime: number; recentForm: number[]; seasonAvg: number; stale: boolean }>(null);
+  const [manualLooking, setManualLooking] = useState(false);
+
   useEffect(() => {
     fetch("/api/backtest")
       .then((r) => r.json())
@@ -780,6 +790,162 @@ export default function Home() {
                 </div>
               </>
             )}
+
+            {/* Manual leg evaluator */}
+            <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
+              <h3 className="font-semibold text-white text-sm">Evaluate a leg from any platform</h3>
+              <p className="text-gray-500 text-xs">Enter a player, stat and threshold — we&apos;ll show you the L10 hit rate and edge.</p>
+
+              {/* Player search */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search player name…"
+                  value={manualSearch}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setManualSearch(v);
+                    setManualPlayer("");
+                    setManualLookup(null);
+                    if (v.length >= 2) {
+                      fetch(`/api/player-lookup?q=${encodeURIComponent(v)}`)
+                        .then((r) => r.json())
+                        .then((d) => setManualSuggestions(d.players ?? []));
+                    } else {
+                      setManualSuggestions([]);
+                    }
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                />
+                {manualSuggestions.length > 0 && !manualPlayer && (
+                  <div className="absolute z-10 w-full bg-gray-800 border border-gray-700 rounded-lg mt-1 overflow-hidden">
+                    {manualSuggestions.map((name) => (
+                      <button
+                        key={name}
+                        onClick={() => { setManualPlayer(name); setManualSearch(name); setManualSuggestions([]); setManualLookup(null); }}
+                        className="w-full text-left px-3 py-2 text-sm text-white hover:bg-gray-700"
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Stat + threshold + odds */}
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  value={manualStat}
+                  onChange={(e) => { setManualStat(e.target.value as typeof manualStat); setManualLookup(null); }}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-green-500"
+                >
+                  {["disposals","kicks","marks","handballs","tackles","clearances","goals"].map((s) => (
+                    <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  placeholder="Threshold (e.g. 23)"
+                  value={manualThreshold}
+                  onChange={(e) => { setManualThreshold(e.target.value); setManualLookup(null); }}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Odds (e.g. 1.85)"
+                  value={manualOdds}
+                  onChange={(e) => setManualOdds(e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                />
+              </div>
+
+              <button
+                disabled={!manualPlayer || !manualThreshold || manualLooking}
+                onClick={() => {
+                  if (!manualPlayer || !manualThreshold) return;
+                  setManualLooking(true);
+                  setManualLookup(null);
+                  fetch(`/api/player-lookup?player=${encodeURIComponent(manualPlayer)}&stat=${manualStat}&threshold=${manualThreshold}`)
+                    .then((r) => r.json())
+                    .then((d) => { setManualLookup(d); setManualLooking(false); })
+                    .catch(() => setManualLooking(false));
+                }}
+                className="w-full bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-black font-semibold py-2 rounded-lg text-sm"
+              >
+                {manualLooking ? "Looking up…" : "Check this bet"}
+              </button>
+
+              {/* Results */}
+              {manualLookup && (
+                manualLookup.found === false ? (
+                  <p className="text-red-400 text-sm">Player not found in database — we may not have their stats yet.</p>
+                ) : (
+                  <div className="bg-gray-800 rounded-lg p-3 space-y-2">
+                    {manualLookup.stale && (
+                      <p className="text-yellow-400 text-xs">⚠️ Most recent game data is from before 2025 — treat with caution.</p>
+                    )}
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div>
+                        <div className={`text-xl font-bold ${manualLookup.hitRate10 >= 70 ? "text-green-400" : manualLookup.hitRate10 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                          {manualLookup.hitRate10}%
+                        </div>
+                        <div className="text-gray-500 text-xs">L10 hit rate</div>
+                      </div>
+                      <div>
+                        <div className={`text-xl font-bold ${manualLookup.hitRate5 >= 70 ? "text-green-400" : manualLookup.hitRate5 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                          {manualLookup.hitRate5}%
+                        </div>
+                        <div className="text-gray-500 text-xs">L5 hit rate</div>
+                      </div>
+                      <div>
+                        <div className="text-xl font-bold text-gray-400">{manualLookup.allTime}%</div>
+                        <div className="text-gray-500 text-xs">All-time</div>
+                      </div>
+                    </div>
+                    {manualOdds && parseFloat(manualOdds) > 1 && (() => {
+                      const implied = Math.round((1 / parseFloat(manualOdds)) * 1000) / 10;
+                      const edge = Math.round((manualLookup.hitRate10 - implied) * 10) / 10;
+                      return (
+                        <div className={`text-center rounded-lg py-2 px-3 ${edge > 0 ? "bg-green-950 border border-green-800" : "bg-red-950 border border-red-900"}`}>
+                          <span className={`text-lg font-bold ${edge > 0 ? "text-green-400" : "text-red-400"}`}>
+                            {edge > 0 ? "+" : ""}{edge}% L10 edge
+                          </span>
+                          <span className="text-gray-500 text-xs ml-2">({implied}% implied)</span>
+                          <p className={`text-xs mt-1 ${edge > 0 ? "text-green-300" : "text-red-300"}`}>
+                            {edge > 10 ? "Strong value — good leg" : edge > 0 ? "Slight edge — acceptable" : edge > -10 ? "Marginal — borderline" : "No value at this price"}
+                          </p>
+                        </div>
+                      );
+                    })()}
+                    <div className="text-xs text-gray-500">
+                      Last 5: {manualLookup.recentForm.join(", ")} · avg {manualLookup.seasonAvg}
+                    </div>
+                    {manualPlayer && manualThreshold && manualOdds && parseFloat(manualOdds) > 1 && manualLookup.found && (
+                      <button
+                        onClick={() => {
+                          const implied = Math.round((1 / parseFloat(manualOdds)) * 1000) / 10;
+                          setMulti([...multi, {
+                            id: `manual-${manualPlayer}-${manualStat}-${manualThreshold}-${Date.now()}`,
+                            tip: `${manualPlayer} ${manualThreshold}+ ${manualStat}`,
+                            confidence: manualLookup.hitRate10,
+                            match: "Manual entry",
+                            sport: "AFL",
+                            odds: parseFloat(manualOdds),
+                            bookie: "Manual",
+                            confidenceSource: "stats",
+                          }]);
+                          setManualSearch(""); setManualPlayer(""); setManualThreshold(""); setManualOdds(""); setManualLookup(null);
+                        }}
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-lg text-sm"
+                      >
+                        Add to multi ({manualLookup.hitRate10}% L10)
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
           </div>
         )}
 
