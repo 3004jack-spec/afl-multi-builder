@@ -67,7 +67,8 @@ interface PlayerProp {
   hitRate10: number;     // straight hit rate last 10 games
   coldForm: boolean;     // true when last-10 hit rate is 25+ points below all-time
   bookmakerImplied: number;
-  edge: number;
+  edge: number;          // all-time weighted edge (used by Auto Multi)
+  recentEdge: number;    // L10 hit rate minus bookmaker implied — primary display metric
   seasonAvg: number;
   recentForm: number[];
   thresholds: ThresholdPoint[];
@@ -221,6 +222,10 @@ export async function GET() {
     const storedPlayer = stored[playerName];
     if (!storedPlayer || storedPlayer.games.length < 10) continue;
 
+    // Staleness gate: most recent game must be from 2025 or later
+    const mostRecentYear = storedPlayer.games[storedPlayer.games.length - 1].year;
+    if (mostRecentYear < 2025) continue;
+
     const statValues = storedPlayer.games.map((g) => {
       const v = (g as unknown as Record<string, unknown>)[entry.statType];
       return typeof v === "number" ? v : 0;
@@ -269,7 +274,11 @@ export async function GET() {
     const hitRate5 = last5.length ? Math.round((last5.filter(v => v >= threshold).length / last5.length) * 1000) / 10 : best.hitRate;
     const hitRate10 = last10.length ? Math.round((last10.filter(v => v >= threshold).length / last10.length) * 1000) / 10 : best.hitRate;
     const coldForm = best.hitRate - hitRate10 >= 25;
+    const recentEdge = Math.round((hitRate10 - best.bookmakerImplied) * 10) / 10;
     const thresholds = buildThresholds(statValues);
+
+    // Require positive recent edge — all-time edge alone isn't enough
+    if (recentEdge <= 0) continue;
 
     props.push({
       playerName,
@@ -290,12 +299,13 @@ export async function GET() {
       coldForm,
       bookmakerImplied: best.bookmakerImplied,
       edge: best.edge,
+      recentEdge,
       seasonAvg,
       recentForm,
       thresholds,
     });
   }
 
-  props.sort((a, b) => b.edge - a.edge);
+  props.sort((a, b) => b.recentEdge - a.recentEdge);
   return NextResponse.json({ props });
 }

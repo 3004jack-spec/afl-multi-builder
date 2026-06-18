@@ -84,6 +84,7 @@ interface PlayerProp {
   coldForm: boolean;
   bookmakerImplied: number;
   edge: number;
+  recentEdge: number;
   recentForm: number[];
   seasonAvg: number;
   thresholds: ThresholdPoint[];
@@ -829,7 +830,7 @@ export default function Home() {
                   if (nDiff !== 0) return nDiff;
                   const tDiff = new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
                   if (tDiff !== 0) return tDiff;
-                  return b.edge - a.edge;
+                  return b.recentEdge - a.recentEdge;
                 }).map((prop) => {
                   const propId = `prop-${prop.playerName}-${prop.statType}`;
                   const inMulti = !!multi.find((l) => l.id === propId);
@@ -897,7 +898,7 @@ export default function Home() {
                                   {marketThreshold}+ {prop.statLabel}
                                   <span className="ml-2 font-normal text-xs text-gray-400">(line {prop.marketLine})</span>
                                 </div>
-                                <span className="text-green-400 text-xs font-semibold">+{prop.edge}% edge</span>
+                                <span className="text-green-400 text-xs font-semibold">+{prop.recentEdge}% L10 edge</span>
                               </div>
                               <div className="text-gray-500 text-xs mt-0.5">
                                 Best: ${prop.bestOdds} @ {prop.bestBookie} · {prop.bookmakerImplied}% implied
@@ -953,18 +954,16 @@ export default function Home() {
                           </div>
 
                           <div className="text-right ml-4 shrink-0">
-                            <div className={`text-2xl font-bold ${prop.hitRate >= 75 ? "text-green-400" : prop.hitRate >= 65 ? "text-yellow-400" : "text-gray-400"}`}>
-                              {prop.hitRate}%
+                            <div className={`text-2xl font-bold ${prop.hitRate10 >= 75 ? "text-green-400" : prop.hitRate10 >= 65 ? "text-yellow-400" : "text-gray-400"}`}>
+                              {prop.hitRate10}%
                             </div>
-                            <div className="text-gray-500 text-xs">all-time</div>
-                            <div className={`text-xs font-semibold mt-0.5 ${prop.hitRate10 >= prop.hitRate - 10 ? "text-green-400" : prop.hitRate10 >= prop.hitRate - 25 ? "text-yellow-400" : "text-red-400"}`}>
-                              {prop.hitRate10}% L10
-                            </div>
+                            <div className="text-gray-500 text-xs">L10 hit rate</div>
+                            <div className="text-green-400 text-sm font-semibold mt-0.5">+{prop.recentEdge}% edge</div>
+                            <div className="text-gray-600 text-xs mt-1">{prop.hitRate}% all-time</div>
                             <div className={`text-xs ${prop.hitRate5 >= prop.hitRate - 10 ? "text-green-400" : prop.hitRate5 >= prop.hitRate - 25 ? "text-yellow-400" : "text-red-400"}`}>
                               {prop.hitRate5}% L5
                             </div>
-                            <div className="text-green-400 text-sm font-semibold mt-1">+{prop.edge}% edge</div>
-                            <div className="text-gray-400 text-xs">{prop.gamesAnalysed} games</div>
+                            <div className="text-gray-400 text-xs mt-1">{prop.gamesAnalysed} games</div>
                           </div>
                         </div>
 
