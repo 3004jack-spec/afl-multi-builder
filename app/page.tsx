@@ -246,7 +246,11 @@ export default function Home() {
           }
 
           const combinedOdds = Math.round(bestCombinedOdds * 100) / 100;
-          const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate10 / 100), 1) * 1000) / 10;
+          // Bayesian shrinkage: blend L10 toward all-time using k=15 prior games.
+          // Prevents 100% L10 from being taken literally — true prob is closer to 79-85%.
+          // Formula: (10 * hitRate10 + 15 * hitRate) / 25
+          const adjustedRate = (p: PlayerProp) => (10 * p.hitRate10 + 15 * p.hitRate) / 25;
+          const strikeRate = Math.round(current.reduce((a, p) => a * (adjustedRate(p) / 100), 1) * 1000) / 10;
           const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
           const kelly = combinedOdds > 1
             ? Math.round(((strikeRate / 100) * combinedOdds - 1) / (combinedOdds - 1) * 1000) / 10
@@ -622,10 +626,8 @@ export default function Home() {
                             {/* Legs */}
                             <div className="space-y-1 mb-3">
                               {combo.legs.map((prop) => {
-                                const legOdds = bookieFilter === "Best odds"
-                                  ? prop.bestOdds
-                                  : (prop.bookmakerOdds[bookieFilter] ?? prop.bestOdds);
-                                const legBookie = bookieFilter === "Best odds" ? prop.bestBookie : bookieFilter;
+                                const legOdds = prop.bookmakerOdds[combo.bookie] ?? prop.bestOdds;
+                                const legBookie = combo.bookie;
                                 return (
                                   <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded px-3 py-1.5 text-xs">
                                     <div className="flex-1 min-w-0 flex items-center gap-1.5">
