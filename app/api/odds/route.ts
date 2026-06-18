@@ -7,7 +7,6 @@ const SQUIGGLE_SOURCE = 8;
 
 const SPORTS = [
   { key: "aussierules_afl", label: "AFL" },
-  { key: "rugbyleague_nrl", label: "NRL" },
 ];
 
 // Bookmakers to display (Aussie-relevant)

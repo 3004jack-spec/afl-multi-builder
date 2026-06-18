@@ -119,7 +119,7 @@ export default function Home() {
   const [propsLoaded, setPropsLoaded] = useState(false);
   const [edgeFilter, setEdgeFilter] = useState<number>(5);
   const [hitRateFilter, setHitRateFilter] = useState<number>(90);
-  const [sportFilter, setSportFilter] = useState<"ALL" | "AFL" | "NRL">("ALL");
+  const [sportFilter, setSportFilter] = useState<"ALL" | "AFL">("ALL");
   const [confFilter, setConfFilter] = useState<number>(70);
   const [bookieFilter, setBookieFilter] = useState<string>("Best odds");
   const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
@@ -247,7 +247,7 @@ export default function Home() {
   // Pool: 90%+ hit rate with positive edge — grinder strategy
   // Min odds $1.15 — legs below this barely move combined odds and aren't meaningful bets
   // Exclude cold form — last-10 hit rate 25+ points below all-time signals role/injury change
-  const autoPool = props.filter((p) => p.hitRate >= hitRateFilter && p.edge > 0 && p.bestOdds >= 1.15 && !p.coldForm).slice(0, 12);
+  const autoPool = props.filter((p) => p.hitRate10 >= hitRateFilter && p.recentEdge > 0 && p.bestOdds >= 1.15 && !p.coldForm).slice(0, 12);
   const availableBookies = ["Best odds", ...getAvailableBookies(autoPool)];
   const allCombos = buildAllCombos(autoPool, bookieFilter);
 
@@ -262,7 +262,7 @@ export default function Home() {
       {/* Header */}
       <div className="bg-gray-900 border-b border-gray-800 px-4 py-4">
         <h1 className="text-xl font-bold text-white">Multi Builder</h1>
-        <p className="text-gray-400 text-sm mt-0.5">AFL · NRL — real odds from 11 bookmakers</p>
+        <p className="text-gray-400 text-sm mt-0.5">AFL — real odds from 11 bookmakers</p>
       </div>
 
       {/* Tabs */}
@@ -309,7 +309,7 @@ export default function Home() {
             {/* Filters */}
             <div className="flex gap-2 flex-wrap">
               <div className="flex gap-1">
-                {(["ALL", "AFL", "NRL"] as const).map((s) => (
+                {(["ALL", "AFL"] as const).map((s) => (
                   <button
                     key={s}
                     onClick={() => setSportFilter(s)}
