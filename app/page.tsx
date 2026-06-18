@@ -120,6 +120,9 @@ export default function Home() {
   const [sportFilter, setSportFilter] = useState<"ALL" | "AFL" | "NRL">("ALL");
   const [confFilter, setConfFilter] = useState<number>(70);
   const [bookieFilter, setBookieFilter] = useState<string>("Best odds");
+  const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
+  const [emergencyPlayers, setEmergencyPlayers] = useState<Set<string>>(new Set());
+  const [lineupsLoaded, setLineupsLoaded] = useState(false);
 
   useEffect(() => {
     fetch("/api/backtest")
@@ -129,7 +132,25 @@ export default function Home() {
     fetch("/api/odds")
       .then((r) => r.json())
       .then((d) => { setGames(d.games ?? []); setGamesLoading(false); });
+
+    fetch("/api/lineups")
+      .then((r) => r.json())
+      .then((d) => {
+        setNamedPlayers(new Set(d.named ?? []));
+        setEmergencyPlayers(new Set(d.emergencies ?? []));
+        setLineupsLoaded(true);
+      })
+      .catch(() => setLineupsLoaded(true));
   }, []);
+
+  function lineupStatus(playerName: string): "named" | "emergency" | "not-named" | "unknown" {
+    if (!lineupsLoaded) return "unknown";
+    if (namedPlayers.has(playerName)) return "named";
+    if (emergencyPlayers.has(playerName)) return "emergency";
+    // Only flag as not-named if we have data for that round (some games announced later)
+    if (namedPlayers.size > 0) return "not-named";
+    return "unknown";
+  }
 
   function toggleLeg(game: OddsGame) {
     const exists = multi.find((l) => l.id === game.id);
@@ -573,9 +594,16 @@ export default function Home() {
                                 const legBookie = bookieFilter === "Best odds" ? prop.bestBookie : bookieFilter;
                                 return (
                                   <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded px-3 py-1.5 text-xs">
-                                    <div className="flex-1 min-w-0">
+                                    <div className="flex-1 min-w-0 flex items-center gap-1.5">
                                       <span className="text-white font-medium">{prop.playerName}</span>
-                                      <span className="text-gray-400 ml-1.5">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
+                                      {(() => {
+                                        const ls = lineupStatus(prop.playerName);
+                                        if (ls === "named") return <span className="text-green-400 font-bold">✓</span>;
+                                        if (ls === "emergency") return <span className="text-yellow-400 font-bold">⚠</span>;
+                                        if (ls === "not-named") return <span className="text-red-400 font-bold">✗</span>;
+                                        return null;
+                                      })()}
+                                      <span className="text-gray-400">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0 ml-2">
                                       <span className={`font-semibold ${prop.hitRate >= 75 ? "text-green-400" : "text-yellow-400"}`}>{prop.hitRate}%</span>
@@ -835,6 +863,13 @@ export default function Home() {
                                   COLD FORM ⚠️
                                 </span>
                               )}
+                              {(() => {
+                                const ls = lineupStatus(prop.playerName);
+                                if (ls === "named") return <span className="text-xs bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-semibold">NAMED ✓</span>;
+                                if (ls === "emergency") return <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded font-semibold">EMERGENCY</span>;
+                                if (ls === "not-named") return <span className="text-xs bg-red-900 text-red-300 px-1.5 py-0.5 rounded font-semibold">NOT NAMED ✗</span>;
+                                return null;
+                              })()}
                               {inMulti && <span className="text-xs bg-green-500 text-black px-1.5 py-0.5 rounded font-bold">IN MULTI ✓</span>}
                             </div>
                             <div className="font-semibold text-white text-sm">{prop.playerName}</div>
