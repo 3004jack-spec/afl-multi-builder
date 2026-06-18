@@ -200,12 +200,14 @@ export default function Home() {
       .map(([name]) => name);
   }
 
-  // Build combos for a specific bookmaker (or best-odds across all)
+  // Build combos for a specific bookmaker (or best single bookie across all legs)
   function buildAllCombos(pool: PlayerProp[], selectedBookie: string, maxLegs = 6, topN = 20): AutoMultiCombo[] {
-    // Filter to players that have odds at the selected bookmaker (or all for best-odds mode)
     const eligible = selectedBookie === "Best odds"
       ? pool
       : pool.filter((p) => p.bookmakerOdds[selectedBookie] !== undefined);
+
+    // All bookies available across the pool (for best-bookie-per-combo selection)
+    const allBookies = [...new Set(eligible.flatMap((p) => Object.keys(p.bookmakerOdds)))];
 
     const allResults: AutoMultiCombo[] = [];
 
@@ -214,18 +216,32 @@ export default function Home() {
 
       function combine(start: number, current: PlayerProp[]) {
         if (current.length === legCount) {
-          // Use selected bookie's odds, or best odds if "Best odds" mode
-          const legOdds = current.map((p) =>
-            selectedBookie === "Best odds" ? p.bestOdds : (p.bookmakerOdds[selectedBookie] ?? p.bestOdds)
-          );
-          const combinedOdds = Math.round(legOdds.reduce((a, o) => a * o, 1) * 100) / 100;
-          const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate / 100), 1) * 1000) / 10;
+          let bestCombinedOdds = 0;
+          let bestBookie = selectedBookie;
+
+          if (selectedBookie === "Best odds") {
+            // Find the single bookie with best combined odds where ALL legs are priced
+            for (const bk of allBookies) {
+              if (!current.every((p) => p.bookmakerOdds[bk] !== undefined)) continue;
+              const combined = current.reduce((a, p) => a * p.bookmakerOdds[bk], 1);
+              if (combined > bestCombinedOdds) {
+                bestCombinedOdds = combined;
+                bestBookie = bk;
+              }
+            }
+            if (bestCombinedOdds === 0) return; // no single bookie covers all legs
+          } else {
+            bestBookie = selectedBookie;
+            bestCombinedOdds = current.reduce((a, p) => a * (p.bookmakerOdds[selectedBookie] ?? p.bestOdds), 1);
+          }
+
+          const combinedOdds = Math.round(bestCombinedOdds * 100) / 100;
+          const strikeRate = Math.round(current.reduce((a, p) => a * (p.hitRate10 / 100), 1) * 1000) / 10;
           const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
-          // Kelly fraction = EV / (combinedOdds - 1) — optimal bankroll % for log-growth
           const kelly = combinedOdds > 1
             ? Math.round(((strikeRate / 100) * combinedOdds - 1) / (combinedOdds - 1) * 1000) / 10
             : 0;
-          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, kelly, bookie: selectedBookie });
+          results.push({ legs: [...current], combinedOdds, strikeRate, ev100, kelly, bookie: bestBookie });
           return;
         }
         for (let i = start; i < eligible.length; i++) {
@@ -241,7 +257,13 @@ export default function Home() {
       allResults.push(...results.slice(0, 3));
     }
 
-    return allResults.sort((a, b) => b.kelly - a.kelly).slice(0, topN);
+    // Sort by soonest game first, then by kelly within same date
+    return allResults.sort((a, b) => {
+      const aTime = Math.min(...a.legs.map((l) => new Date(l.commenceTime).getTime()));
+      const bTime = Math.min(...b.legs.map((l) => new Date(l.commenceTime).getTime()));
+      if (aTime !== bTime) return aTime - bTime;
+      return b.kelly - a.kelly;
+    }).slice(0, topN);
   }
 
   // Pool: 90%+ hit rate with positive edge — grinder strategy
