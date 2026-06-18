@@ -68,6 +68,7 @@ interface PricedLine {
 interface PlayerProp {
   playerName: string;
   matchup: string;
+  commenceTime: string;
   statType: string;
   statLabel: string;
   marketLine: number;
@@ -815,7 +816,21 @@ export default function Home() {
                   {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).length} bets · {edgeFilter}%+ edge · Tap to add to multi
                 </p>
 
-                {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).map((prop) => {
+                {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).sort((a, b) => {
+                  // Named players first, then by game time (soonest first), then by edge
+                  const namedRank = (p: PlayerProp) => {
+                    const ls = lineupStatus(p.playerName);
+                    if (ls === "named") return 0;
+                    if (ls === "unknown") return 1;
+                    if (ls === "emergency") return 2;
+                    return 3;
+                  };
+                  const nDiff = namedRank(a) - namedRank(b);
+                  if (nDiff !== 0) return nDiff;
+                  const tDiff = new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
+                  if (tDiff !== 0) return tDiff;
+                  return b.edge - a.edge;
+                }).map((prop) => {
                   const propId = `prop-${prop.playerName}-${prop.statType}`;
                   const inMulti = !!multi.find((l) => l.id === propId);
                   const isExpanded = expandedProp === propId;

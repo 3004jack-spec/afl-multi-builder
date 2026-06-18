@@ -52,6 +52,7 @@ interface PricedLine {
 interface PlayerProp {
   playerName: string;
   matchup: string;
+  commenceTime: string;
   statType: StatType;
   statLabel: string;
   marketLine: number;
@@ -151,9 +152,10 @@ export async function GET() {
   const events = await eventsRes.json();
   if (!Array.isArray(events)) return NextResponse.json({ props: [] });
 
-  // playerName+statType → { matchup, statType, statLabel, lines: line → bookie → odds }
+  // playerName+statType → { matchup, commenceTime, statType, statLabel, lines: line → bookie → odds }
   const playerLineMap = new Map<string, {
     matchup: string;
+    commenceTime: string;
     statType: StatType;
     statLabel: string;
     lines: Map<number, Record<string, number>>;
@@ -161,7 +163,8 @@ export async function GET() {
 
   function ingestBookmakers(
     bookmakers: Array<{ title: string; markets: Array<{ key: string; outcomes: Array<{ name: string; description: string; point: number; price: number }> }> }>,
-    matchup: string
+    matchup: string,
+    commenceTime: string
   ) {
     for (const bm of bookmakers) {
       for (const market of bm.markets ?? []) {
@@ -176,7 +179,7 @@ export async function GET() {
           const mapKey = `${playerName}::${statDef.stat}`;
           let entry = playerLineMap.get(mapKey);
           if (!entry) {
-            entry = { matchup, statType: statDef.stat, statLabel: statDef.label, lines: new Map() };
+            entry = { matchup, commenceTime, statType: statDef.stat, statLabel: statDef.label, lines: new Map() };
             playerLineMap.set(mapKey, entry);
           }
           const lineBookies = entry.lines.get(line) ?? {};
@@ -190,22 +193,23 @@ export async function GET() {
   }
 
   await Promise.all(
-    events.map(async (event: { id: string; home_team: string; away_team: string }) => {
+    events.map(async (event: { id: string; home_team: string; away_team: string; commence_time: string }) => {
       const matchup = `${event.home_team} v ${event.away_team}`;
+      const commenceTime = event.commence_time;
       const baseUrl = `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&oddsFormat=decimal`;
 
       // Fetch all primary markets in one call — all are valid so safe to combine
       try {
         const res = await fetch(`${baseUrl}&markets=${PRIMARY_MARKETS.join(",")}`, { next: { revalidate: 300 } });
         const data = await res.json();
-        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup);
+        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup, commenceTime);
       } catch { /* skip */ }
 
       // Alternate disposal lines — only available closer to game day, fail silently if not priced
       try {
         const res = await fetch(`${baseUrl}&markets=player_disposals_alternate`, { next: { revalidate: 300 } });
         const data = await res.json();
-        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup);
+        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup, commenceTime);
       } catch { /* skip */ }
     })
   );
@@ -270,6 +274,7 @@ export async function GET() {
     props.push({
       playerName,
       matchup: entry.matchup,
+      commenceTime: entry.commenceTime,
       statType: entry.statType,
       statLabel: entry.statLabel,
       marketLine: best.line,
