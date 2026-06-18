@@ -78,6 +78,9 @@ interface PlayerProp {
   allPricedLines: PricedLine[];
   gamesAnalysed: number;
   hitRate: number;
+  hitRate5: number;
+  hitRate10: number;
+  coldForm: boolean;
   bookmakerImplied: number;
   edge: number;
   recentForm: number[];
@@ -109,10 +112,11 @@ export default function Home() {
   const [multi, setMulti] = useState<MultiLeg[]>([]);
   const [props, setProps] = useState<PlayerProp[]>([]);
   const [expandedProp, setExpandedProp] = useState<string | null>(null);
-  const [statFilter, setStatFilter] = useState<"all" | "disposals" | "goals" | "marks" | "kicks" | "tackles">("all");
+  const [statFilter, setStatFilter] = useState<"all" | "disposals" | "goals" | "marks" | "kicks" | "handballs" | "tackles" | "clearances">("all");
   const [propsLoading, setPropsLoading] = useState(false);
   const [propsLoaded, setPropsLoaded] = useState(false);
-  const [edgeFilter, setEdgeFilter] = useState<number>(10);
+  const [edgeFilter, setEdgeFilter] = useState<number>(5);
+  const [hitRateFilter, setHitRateFilter] = useState<number>(90);
   const [sportFilter, setSportFilter] = useState<"ALL" | "AFL" | "NRL">("ALL");
   const [confFilter, setConfFilter] = useState<number>(70);
   const [bookieFilter, setBookieFilter] = useState<string>("Best odds");
@@ -217,8 +221,10 @@ export default function Home() {
     return allResults.sort((a, b) => b.kelly - a.kelly).slice(0, topN);
   }
 
-  // Pool: all props with any positive edge, capped at 12 for perf
-  const autoPool = props.filter((p) => p.edge > 0).slice(0, 12);
+  // Pool: 90%+ hit rate with positive edge — grinder strategy
+  // Min odds $1.15 — legs below this barely move combined odds and aren't meaningful bets
+  // Exclude cold form — last-10 hit rate 25+ points below all-time signals role/injury change
+  const autoPool = props.filter((p) => p.hitRate >= hitRateFilter && p.edge > 0 && p.bestOdds >= 1.15 && !p.coldForm).slice(0, 12);
   const availableBookies = ["Best odds", ...getAvailableBookies(autoPool)];
   const allCombos = buildAllCombos(autoPool, bookieFilter);
 
@@ -447,17 +453,46 @@ export default function Home() {
                 <p className="font-medium text-white">Auto Multi</p>
                 <p className="text-sm mt-1 mb-4">Generates the highest EV combinations from all current player props.</p>
               </div>
-            ) : autoPool.length < 2 ? (
-              <div className="text-center py-12 text-gray-400">
-                <p className="font-medium text-white">Not enough qualifying props</p>
-                <p className="text-sm mt-1">Need at least 2 players with positive edge. Try again closer to game day.</p>
-              </div>
             ) : (
               <>
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
-                  <p>All bets ranked purely by Expected Value. Select a bookmaker to see only legs placeable at that one provider — required for same-game multis.</p>
+                  <p className="text-white font-medium mb-1">Grinder strategy — high strike rate, low variance</p>
+                  <p>Only legs where recent form gives 90%+ hit rate. Lower odds, but wins consistently. 4 legs at 90% = 65.6% multi strike rate. No AFL knowledge needed — pure numbers.</p>
                 </div>
 
+                {/* Hit rate threshold selector */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-2">Minimum hit rate per leg:</div>
+                  <div className="flex gap-1.5">
+                    {[80, 85, 90, 95].map((hr) => (
+                      <button
+                        key={hr}
+                        onClick={() => setHitRateFilter(hr)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          hitRateFilter === hr ? "bg-green-500 text-black" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                        }`}
+                      >
+                        {hr}%+
+                      </button>
+                    ))}
+                  </div>
+                  {autoPool.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1.5">
+                      {autoPool.length} qualifying leg{autoPool.length !== 1 ? "s" : ""} at {hitRateFilter}%+ hit rate
+                      {hitRateFilter === 90 && autoPool.length >= 4 && (
+                        <span className="text-green-400 ml-2">· 4-leg strike rate: {Math.round(Math.pow(0.9, Math.min(autoPool.length, 4)) * 1000) / 10}%</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                {autoPool.length < 2 ? (
+                  <div className="text-center py-8 text-gray-400 bg-gray-900 border border-gray-800 rounded-xl">
+                    <p className="font-medium text-white">No legs qualify at {hitRateFilter}%+</p>
+                    <p className="text-sm mt-1">Try lowering the hit rate filter, or check back closer to game day when more markets open.</p>
+                  </div>
+                ) : (
+                  <>
                 {/* Bookmaker filter */}
                 <div>
                   <div className="text-xs text-gray-500 mb-2">Place multi at:</div>
@@ -589,6 +624,8 @@ export default function Home() {
                   <p><span className="text-white">EV / $100</span> = raw profit per $100, shown as context only. Not used for ranking — a big EV on a low-probability multi is misleading.</p>
                   <p><span className="text-white">Same-bookmaker rule:</span> select one bookmaker above — all legs in a multi must be placed at the same provider.</p>
                 </div>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -717,7 +754,7 @@ export default function Home() {
 
                 {/* Stat type filter */}
                 <div className="flex gap-1 flex-wrap">
-                  {(["all", "disposals", "goals", "marks", "kicks", "tackles"] as const).map((s) => (
+                  {(["all", "disposals", "kicks", "marks", "handballs", "tackles", "clearances", "goals"] as const).map((s) => (
                     <button
                       key={s}
                       onClick={() => setStatFilter(s)}
@@ -766,7 +803,7 @@ export default function Home() {
 
                   return (
                     <div
-                      key={prop.playerName}
+                      key={`${prop.playerName}-${prop.statType}`}
                       className={`rounded-xl border transition-all ${
                         inMulti ? "bg-green-950 border-green-600" : "bg-gray-900 border-gray-800"
                       }`}
@@ -777,9 +814,13 @@ export default function Home() {
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded font-semibold">AFL</span>
                               <span className={`text-xs px-1.5 py-0.5 rounded font-semibold capitalize ${
-                                prop.statType === "disposals" ? "bg-purple-900 text-purple-300" :
-                                prop.statType === "goals" ? "bg-orange-900 text-orange-300" :
-                                prop.statType === "marks" ? "bg-cyan-900 text-cyan-300" :
+                                prop.statType === "disposals"  ? "bg-purple-900 text-purple-300" :
+                                prop.statType === "goals"      ? "bg-orange-900 text-orange-300" :
+                                prop.statType === "marks"      ? "bg-cyan-900 text-cyan-300" :
+                                prop.statType === "kicks"      ? "bg-blue-900 text-blue-300" :
+                                prop.statType === "handballs"  ? "bg-pink-900 text-pink-300" :
+                                prop.statType === "tackles"    ? "bg-red-900 text-red-300" :
+                                prop.statType === "clearances" ? "bg-teal-900 text-teal-300" :
                                 "bg-gray-700 text-gray-300"
                               }`}>
                                 {prop.statLabel}
@@ -787,6 +828,11 @@ export default function Home() {
                               {prop.isAlternateLine && (
                                 <span className="text-xs bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-semibold">
                                   ALT LINE ★
+                                </span>
+                              )}
+                              {prop.coldForm && (
+                                <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded font-semibold">
+                                  COLD FORM ⚠️
                                 </span>
                               )}
                               {inMulti && <span className="text-xs bg-green-500 text-black px-1.5 py-0.5 rounded font-bold">IN MULTI ✓</span>}
@@ -860,7 +906,13 @@ export default function Home() {
                             <div className={`text-2xl font-bold ${prop.hitRate >= 75 ? "text-green-400" : prop.hitRate >= 65 ? "text-yellow-400" : "text-gray-400"}`}>
                               {prop.hitRate}%
                             </div>
-                            <div className="text-gray-500 text-xs">hit rate</div>
+                            <div className="text-gray-500 text-xs">all-time</div>
+                            <div className={`text-xs font-semibold mt-0.5 ${prop.hitRate10 >= prop.hitRate - 10 ? "text-green-400" : prop.hitRate10 >= prop.hitRate - 25 ? "text-yellow-400" : "text-red-400"}`}>
+                              {prop.hitRate10}% L10
+                            </div>
+                            <div className={`text-xs ${prop.hitRate5 >= prop.hitRate - 10 ? "text-green-400" : prop.hitRate5 >= prop.hitRate - 25 ? "text-yellow-400" : "text-red-400"}`}>
+                              {prop.hitRate5}% L5
+                            </div>
                             <div className="text-green-400 text-sm font-semibold mt-1">+{prop.edge}% edge</div>
                             <div className="text-gray-400 text-xs">{prop.gamesAnalysed} games</div>
                           </div>
@@ -939,7 +991,7 @@ export default function Home() {
             ) : (
               <div className="text-center py-16 text-gray-400">
                 <div className="text-4xl mb-3">🔬</div>
-                <p className="font-medium text-white">Player disposal analysis</p>
+                <p className="font-medium text-white">Player prop analysis</p>
                 <p className="text-sm mt-1 mb-4">Compares real hit rates vs bookmaker lines across 3 seasons of data.</p>
               </div>
             )}
