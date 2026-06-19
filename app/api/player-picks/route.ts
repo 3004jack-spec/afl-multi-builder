@@ -90,6 +90,7 @@ export interface HistoricalPick {
   recentForm: number[];
   gamesAnalysed: number;
   suggestedLine: string; // e.g. "19+ disposals"
+  matchup?: string;
 }
 
 function loadPlayerStats(): Record<string, StoredPlayer> {
@@ -187,6 +188,7 @@ export async function GET(request: Request) {
         recentForm: last5,
         gamesAnalysed: n,
         suggestedLine: `${bestThreshold}+ ${stat}`,
+        matchup: player.matchup ?? "",
       });
     }
   }

@@ -14,6 +14,7 @@ interface HistoricalPick {
   recentForm: number[];
   gamesAnalysed: number;
   suggestedLine: string;
+  matchup?: string;
 }
 
 interface BandResult {
@@ -1563,14 +1564,15 @@ export default function Home() {
                         {filtered.map((pick) => {
                           const formColor = (val: number) => val >= pick.suggestedThreshold ? "bg-green-500" : "bg-red-500";
                           const liveProp = props.find((lp) => lp.playerName === pick.playerName && lp.statType === pick.statType);
+                          const matchupDisplay = pick.matchup || liveProp?.matchup;
                           return (
                             <div key={`${pick.playerName}-${pick.statType}`}
                               className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <div className="font-semibold text-white">{pick.playerName}</div>
-                                  {liveProp?.matchup && (
-                                    <div className="text-xs text-blue-400 mt-0.5">{liveProp.matchup}</div>
+                                  {matchupDisplay && (
+                                    <div className="text-xs text-blue-400 mt-0.5">{matchupDisplay}</div>
                                   )}
                                   <div className="text-green-400 font-bold text-sm mt-0.5">{pick.suggestedLine}</div>
                                   <div className="text-xs text-gray-500 mt-0.5">Season avg: {pick.seasonAvg} · {pick.gamesAnalysed} games</div>
