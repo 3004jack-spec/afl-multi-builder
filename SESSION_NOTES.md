@@ -1,5 +1,5 @@
 # AFL Multi Builder — Session Notes
-*Last updated: 2026-06-17*
+*Last updated: 2026-06-19*
 
 ---
 
@@ -9,133 +9,153 @@
 **GitHub:** https://github.com/3004jack-spec/afl-multi-builder  
 **Local dev:** `npm run dev` → port 3001 (via `.claude/launch.json`)
 
-### What is working on Vercel (last clean deploy)
-- Match Odds tab — live AFL/NRL odds from 11 bookmakers
-- Player Props tab — disposals only, recency-weighted hit rates, per-bookie odds chips, alternate line badge
-- Auto Multi tab — Kelly-ranked combos, bookmaker selector (same-bookmaker multi constraint fixed)
-- My Multi tab — single/multi-bookie warning banner
+### What is working on Vercel (last deploy: 2026-06-19)
+- Match Odds tab — live AFL odds, Squiggle confidence model
+- Player Props tab — all 7 stat types (disposals, kicks, marks, tackles, handballs, clearances, goals)
+- Auto Multi tab — Kelly-ranked combos, bookmaker selector, hit rate filter, bonus bet / odds boost toggle
+- My Multi tab — Promotions panel (odds boost buttons, bonus bet toggle), multi strike rate, EV, Kelly
 - Backtest tab — 7 seasons AFL historical data
 
-### What is BROKEN in local code right now
-`app/page.tsx` Auto Multi tab has broken JSX from an interrupted mid-session edit.  
-**Do NOT push to Vercel until this is fixed and verified in preview.**
+### Data sources in play
+| Source | Stats covered | How to refresh |
+|---|---|---|
+| AFL Tables (afltables.com) | All stats, historical | `node scripts/fetch-player-stats.mjs` |
+| The Odds API | Disposals only (live prices) | Automatic via API on page load |
+| Sportsbet scraper | All 7 stats (real prices) | `node scripts/fetch-sportsbet-odds.mjs` |
 
-The error: `Expected '</', got '{'` at line 516.  
-Root cause: `{autoPool.length >= 2 && <div>` was opened but not properly closed before the `{allCombos.length === 0 ?` expression.
-
-**Fix needed:** Rewrite the Auto Multi tab section (lines ~436–627 in page.tsx) with clean JSX structure. The logic is correct — only the nesting is broken.
-
----
-
-## Changes Made This Session (in order)
-
-### 1. Same-bookmaker multi constraint ✅ (deployed)
-- API now stores `bookmakerOdds: Record<string, number>` per player (all bookies, not just best)
-- Auto Multi: bookmaker selector — filter legs to one provider for a placeable same-game multi
-- My Multi: warning banner if legs span multiple bookmakers
-
-### 2. Kelly fraction ranking ✅ (deployed)
-- Auto Multi now sorts by Kelly = `(strikeRate × combinedOdds − 1) / (combinedOdds − 1)`
-- This is the log-optimal growth criterion — singles with 83% hit rate rank above 5-leg multis with inflated dollar EV
-- Raw EV still shown in grey as context
-
-### 3. Alternate lines + recency-weighted hit rates ✅ (deployed)
-- API fetches `player_disposals,player_disposals_alternate` in ONE call per event (no extra API requests)
-- For each player, all priced lines evaluated; best-edge line selected automatically
-- Hit rates now recency-weighted: half-life = 20 games (~1 AFL season). Recent games dominate, 2023/24 fades
-- UI: "ALT LINE ★" badge when best line differs from main market line
-- All priced lines shown with per-line edge in Player Props
-
-### 4. Hit rate filter on Auto Multi ⚠️ (code written, JSX broken, NOT deployed)
-- `hitRateFilter` state added (default 90%)
-- Auto Multi pool filters to `hitRate >= hitRateFilter && edge > 0`
-- UI buttons: 80% / 85% / 90% / 95% per-leg minimum
-- **This is in the broken JSX section — needs fixing before deploy**
+**Workflow:** Run the Sportsbet scraper once the day before each round. Check live prices on Sportsbet before placing any multi.
 
 ---
 
-## Open Strategic Decision — NOT resolved
+## Changes Made This Session (2026-06-19)
 
-**Jack's request:** Default to 90%+ hit rate per leg (grinder strategy, lower odds, less suspicious)
+### 1. Bayesian prior hardening ✅ (deployed)
+After first bet lost (Clark missed disposals and kicks by 1 each — model had them at 100% confidence), added two defences:
 
-**CTO pushback given (agreed):** 
-- 90% hit rate only has value if bookmaker is mispricing it. At $1.08 (91.5% implied), 90% hit rate = negative edge.
-- Kelly already naturally rewards high-confidence legs — no hard floor needed
-- Better framing: set a **minimum multi strike rate target** (e.g., 50% or 65%) and the model finds the highest-Kelly combination meeting that target
+**Relevant games filter** — `relevantStatValues()` in both route files:
+- 3-season cap (drops data older than `currentYear - 2`)
+- Injury gap detection: if a gap ≥ 5 rounds exists within a season, drops all pre-gap games
+- Applies to both `player-props/route.ts` and `player-picks/route.ts`
 
-**Decision deferred** — needs to be resolved before the hit rate filter is deployed. Options:
-1. Hard per-leg hit rate floor (Jack's original suggestion) — simple but can include negative-edge bets
-2. Minimum multi strike rate slider — mathematically correct, user sets "I want this multi to win X% of the time"
-3. Keep Kelly-only ranking with a soft hit rate floor (e.g., 70% min) to exclude long-shots
-
----
-
-## Jack's Other Point (raised at end of session, not actioned)
-> "we shouldnt just use disposals, much earlier on you did some great work on edge with odds in win line based on history too"
-
-This refers to the **Match Odds tab** backtest — the model already analyses win-line confidence bands (80%+ model confidence → 90.8% actual win rate historically). Jack wants this edge incorporated more directly into the Auto Multi, not just displayed in the Backtest tab.
-
-**Action needed:** Discuss whether to merge match-win legs (from the Squiggle/odds confidence model) with player prop legs into a single Auto Multi pool, ranked by Kelly. A mixed multi (e.g., 2 player props + 1 high-confidence match win) could be very strong.
-
----
-
-## Next Steps — Priority Order
-
-### Fix first (before anything else)
-1. **Fix broken Auto Multi JSX** — rewrite lines ~436–627 in `app/page.tsx` cleanly. Logic is right, structure is broken. Test in preview (`preview_start` → `preview_screenshot`) BEFORE pushing to Vercel.
-
-### Then resolve open decision
-2. **Strategy decision** — resolve the hit rate floor vs multi strike rate target debate with Jack. Then implement whichever approach is agreed.
-
-### Then new features
-3. **Merge match-win legs into Auto Multi** — pull high-confidence match wins (80%+ Squiggle confidence) into the same pool as player props. Kelly ranks them together. User gets best mix automatically.
-4. **Opponent adjustment** — factor in which team is being played (some teams concede more disposals)
-5. **Current season split** — show 2025/2026 hit rate separately alongside all-time weighted rate
-6. **Weekly auto-refresh** — automate `node scripts/fetch-player-stats.mjs` + git push on a schedule
-7. **Promo toggle** — manual input for active bookmaker promotions (multi insurance, odds boost) affecting EV
-
----
-
-## Key Technical Details
-
-### API quota
-- Odds API key: `0f0d4c20983592fffeaa6e1b11206ebd`
-- One request per AFL event (currently fetches `player_disposals,player_disposals_alternate` in one call)
-- Strategy: always add markets as comma-separated to same call, never make separate calls
-
-### Data sources
-- AFL Tables (`afltables.com`) — free, scraped weekly via `node scripts/fetch-player-stats.mjs`
-- Output: `data/player-stats.json` — 130 players, 4 seasons (2023–2026), all stat columns
-- Squiggle API — AFL win probability model, used in Match Odds tab
-- Odds API — live bookmaker odds, 11 AU bookmakers
-
-### Why disposals only (for player props)
-Tested all AFL player markets on Odds API. Only `player_disposals` and `player_disposals_alternate` return valid data. `player_goals`, `player_marks`, `player_kicks`, `player_tackles` all return `INVALID_MARKET`.
-
-### Recency weighting formula
+**Skeptical prior shrinkage** — stops small perfect samples reading as genuinely 100%:
 ```
-weight = 0.966^gamesAgo  (half-life = 20 games)
-weightedHitRate = sum(weight × hit) / sum(weight)
+shrunkPrior = (rawPrior × priorN + 65 × 10) / (priorN + 10)
 ```
-Games stored oldest→newest in `player-stats.json`. Index `n-1` = most recent game.
+10 pseudo-games at 65% pull extreme values down. Clark's 100% → ~87–90%.
+
+**New Bayesian formula** (increased prior weight):
+```
+bayesianRate = (10 × hr10 + 25 × shrunkPrior) / 35
+```
+Was `(10 × L10 + 15 × allTime) / 25` — now prior carries more weight (k=25 vs k=15).
+
+### 2. Promotions panel in My Multi tab ✅ (deployed)
+- Odds boost buttons: None / +5% / +10% / +15% / +20% / +25%
+- Bonus bet toggle (stake not returned on win — different EV formula)
+- Boosted odds formula: `combinedOdds × (1 + boostPct / 100)`
+- Bonus bet EV: `(strikeRate/100) × (boostedOdds - 1) × 100 - 100`
+- Original odds shown with strikethrough when boost active
+
+### 3. Vercel build fix ✅ (deployed)
+Duplicate `StoredGame` interface in `player-props/route.ts` was causing TS2687. Removed the duplicate added at top of file.
+
+### 4. Sportsbet Playwright scraper ✅ (deployed)
+`scripts/fetch-sportsbet-odds.mjs` — headless Chromium scraper:
+- Finds all 6 AFL match URLs (format: `/afl/team-v-team-XXXXXXXX` with numeric event ID)
+- Navigates to each match, clicks each stat pill (Disposals, Kicks, Marks, Tackles, Handballs, Clearances, Goals)
+- Parses `innerText` line by line — player name → threshold ("18+") → decimal price
+- Saves to `data/sportsbet-odds.json`
+- Result: 265 players, 6 matches, all 7 stat types
+
+**Sportsbet data wired into player-props API:**
+- `loadSportsbetOdds()` reads `data/sportsbet-odds.json` on startup
+- Ingested into `playerLineMap` as bookmaker "Sportsbet"
+- Converts threshold (int) → line (threshold - 0.5) to match Odds API format
+- Creates new entries for stats not in Odds API (kicks, handballs, clearances)
+
+---
+
+## Open Items / Next Session Priorities
+
+### 1. Odds API vs Sportsbet name mismatches
+The Odds API uses team names like "Greater Western Sydney" while Sportsbet uses "GWS GIANTS". The `matchupTimeMap` lookup may miss some matches for `commenceTime`. Not critical (commenceTime is display-only) but worth cleaning up.
+
+### 2. Strategy decision — still unresolved from prior session
+Jack wants a high-confidence filter on multi legs. Two approaches:
+- **Hard per-leg hit rate floor** (e.g. 90%) — simple but can include negative-edge bets
+- **Minimum multi strike rate slider** — user sets "I want this multi to win X% of the time"; mathematically correct
+Kelly already rewards high-confidence legs naturally. CTO recommendation: minimum multi strike rate is better than per-leg floor.
+
+### 3. Match-win legs in Auto Multi — raised by Jack, not actioned
+The Backtest tab already shows 80%+ model confidence → 90.8% actual win rate. Jack wants these high-confidence match-win legs merged into the Auto Multi pool alongside player props. A mixed multi (2 player props + 1 high-confidence match win) could be strong. Discuss and decide before building.
+
+### 4. TAB API integration (lower priority)
+`https://api.beta.tab.com.au/v1/tab-info-service/sports/AFL%20Football/competitions/AFL/matches?jurisdiction=NSW` — accessible, no auth. Covers disposals/marks/tackles/goals with real prices. Could build `scripts/fetch-tab-odds.mjs` to supplement Sportsbet for cross-bookmaker price comparison.
+
+### 5. Auto-refresh of Sportsbet odds
+Currently manual (`node scripts/fetch-sportsbet-odds.mjs`). Could add a scheduled GitHub Action to run every Wednesday night before the weekend round and auto-commit `data/sportsbet-odds.json`.
+
+---
+
+## Key Technical Reference
+
+### Bayesian rate formula (current)
+```
+rawPrior = weightedHitRate(relevantGames, threshold)   // recency-weighted, 3-season cap
+shrunkPrior = (rawPrior × priorN + 65 × 10) / (priorN + 10)  // 10 pseudo-games at 65%
+bayesianRate = (10 × hr10 + 25 × shrunkPrior) / 35
+```
+
+### Recency weighting
+```
+weight = 0.966^gamesAgo  (half-life = 20 games ≈ 1 AFL season)
+weightedHitRate = Σ(weight × hit) / Σ(weight)
+```
 
 ### Kelly formula
 ```
 kelly = (strikeRate/100 × combinedOdds − 1) / (combinedOdds − 1)
 ```
-Higher Kelly = better long-term growth. Sort descending. EV shown as secondary context only.
 
-### Same-bookmaker rule
-A same-game multi must be placed entirely at one bookmaker. Select bookmaker in Auto Multi tab before building. My Multi shows warning if legs span multiple bookmakers.
+### Odds boost / bonus bet
+```
+boostedOdds = combinedOdds × (1 + boostPct / 100)
+normalEV = (strikeRate/100) × boostedOdds × 100 − 100
+bonusBetEV = (strikeRate/100) × (boostedOdds − 1) × 100 − 100
+```
+
+### Sportsbet scraper output format
+```json
+{
+  "fetchedAt": "2026-06-19T...",
+  "matches": [{
+    "matchup": "Gold Coast SUNS v Hawthorn",
+    "url": "https://...",
+    "markets": {
+      "Noah Anderson": {
+        "disposals": {"20": 1.04, "21": 1.07, ...},
+        "kicks": {"12": 1.22, ...}
+      }
+    }
+  }]
+}
+```
+
+### API quota
+- Odds API key: `0f0d4c20983592fffeaa6e1b11206ebd`
+- Always combine markets into one call: `&markets=player_disposals,player_kicks_over,...`
+- Never make separate calls per stat type per event
+
+### Data files
+- `data/player-stats.json` — 130 players, historical game logs (AFL Tables)
+- `data/sportsbet-odds.json` — scraped Sportsbet prices (refresh weekly)
+- `data/lineups-override.json` — manual confirmed lineups for upcoming round
 
 ---
 
-## Process Notes (for next session)
+## Process Rules (carry forward to every session)
 
-1. **Always test in preview before pushing to Vercel**
-   - Run `preview_start` → `preview_screenshot` / `preview_console_logs`
-   - Only `git push` after preview confirms no errors
-2. **Don't just implement — challenge the request first**
-   - Jack explicitly wants CTO-style pushback, not reactive coding
-   - State the tradeoffs, make a recommendation, get alignment before building
-3. **TypeScript check before preview**: `npx tsc --noEmit` — but note Next.js swc parser can still reject code tsc accepts (JSX edge cases)
+1. **Test in preview before pushing to Vercel** — `preview_start` → `preview_screenshot` → push only after confirmed
+2. **Challenge before building** — Jack wants CTO-style pushback. State tradeoffs, recommend, get alignment first
+3. **TypeScript check**: `npx tsc --noEmit` before any deploy
+4. **Never make separate API calls when markets can be combined** — Odds API quota is limited
