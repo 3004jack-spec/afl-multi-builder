@@ -235,31 +235,78 @@ export default function Home() {
     });
   }, [picks, games]);
 
-  // Build legs for a given game
+  // Build legs for a given game.
+  // Primary source: player-props (threshold + odds + Bayesian already correctly joined by API).
+  // Supplement: player-picks for players not in props (uses estimated odds = 1/bayesianRate).
+  // This ensures the threshold shown always matches the odds shown.
   function legsForGame(matchup: string): GameLeg[] {
-    return picks
-      .filter(p => p.matchup === matchup && lineupOk(p.playerName))
-      .map(p => {
-        const live = props.find(lp => lp.playerName === p.playerName && lp.statType === p.statType);
-        const estOdds = Math.round((100 / p.bayesianRate) * 100) / 100;
-        return {
-          playerName: p.playerName,
-          statType: p.statType,
-          suggestedLine: p.suggestedLine,
-          threshold: p.suggestedThreshold,
-          bayesianRate: p.bayesianRate,
-          hitRate10: p.hitRate10,
-          hitRate5: p.hitRate5,
-          seasonAvg: p.seasonAvg,
-          recentForm: p.recentForm,
-          odds: live?.bestOdds ?? estOdds,
-          bookie: live?.bestBookie ?? "est.",
-          matchup,
-          hasLiveOdds: !!live,
-        };
-      })
-      .filter(l => l.odds >= 1.04)
-      .sort((a, b) => b.bayesianRate - a.bayesianRate);
+    const seen = new Set<string>();
+    const legs: GameLeg[] = [];
+
+    // 1. Props legs — threshold and odds are correctly matched by the API
+    for (const p of props) {
+      // Fuzzy matchup match: props use Odds API team names, picks use AFL Tables names
+      const propParts = p.matchup.toLowerCase().split(" v ");
+      const gameParts = matchup.toLowerCase().split(" v ");
+      const matchesGame = propParts.length === 2 && gameParts.length === 2 && (
+        (gameParts[0].includes(propParts[0].split(" ")[0]) || propParts[0].includes(gameParts[0].split(" ")[0])) &&
+        (gameParts[1].includes(propParts[1].split(" ")[0]) || propParts[1].includes(gameParts[1].split(" ")[0]))
+      );
+      if (!matchesGame) continue;
+      if (!lineupOk(p.playerName)) continue;
+      if (p.bayesianEdge <= 0 || p.coldForm) continue;
+
+      const key = `${p.playerName}::${p.statType}`;
+      seen.add(key);
+      legs.push({
+        playerName: p.playerName,
+        statType: p.statType,
+        suggestedLine: `${Math.ceil(p.marketLine)}+ ${p.statType}`,
+        threshold: Math.ceil(p.marketLine),
+        bayesianRate: p.bayesianRate,
+        hitRate10: p.hitRate10,
+        hitRate5: p.hitRate5,
+        seasonAvg: p.seasonAvg,
+        recentForm: p.recentForm,
+        odds: p.bestOdds,
+        bookie: p.bestBookie,
+        matchup,
+        hasLiveOdds: true,
+      });
+    }
+
+    // 2. Supplement with picks for players not covered by props (estimated odds)
+    for (const p of picks) {
+      if (p.matchup !== matchup) continue;
+      if (!lineupOk(p.playerName)) continue;
+      const key = `${p.playerName}::${p.statType}`;
+      if (seen.has(key)) continue; // already covered by live props
+      const estOdds = Math.round((100 / p.bayesianRate) * 100) / 100;
+      if (estOdds < 1.04) continue;
+      legs.push({
+        playerName: p.playerName,
+        statType: p.statType,
+        suggestedLine: p.suggestedLine,
+        threshold: p.suggestedThreshold,
+        bayesianRate: p.bayesianRate,
+        hitRate10: p.hitRate10,
+        hitRate5: p.hitRate5,
+        seasonAvg: p.seasonAvg,
+        recentForm: p.recentForm,
+        odds: estOdds,
+        bookie: "est.",
+        matchup,
+        hasLiveOdds: false,
+      });
+    }
+
+    return legs
+      .filter(l => l.bayesianRate >= minBayesian)
+      .sort((a, b) => {
+        // Live-priced legs first, then by bayesian rate
+        if (a.hasLiveOdds !== b.hasLiveOdds) return a.hasLiveOdds ? -1 : 1;
+        return b.bayesianRate - a.bayesianRate;
+      });
   }
 
   function openGame(matchup: string) {
