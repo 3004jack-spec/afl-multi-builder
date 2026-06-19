@@ -2,6 +2,20 @@
 
 import { useEffect, useState } from "react";
 
+interface HistoricalPick {
+  playerName: string;
+  statType: string;
+  suggestedThreshold: number;
+  bayesianRate: number;
+  hitRate10: number;
+  hitRate5: number;
+  allTimeRate: number;
+  seasonAvg: number;
+  recentForm: number[];
+  gamesAnalysed: number;
+  suggestedLine: string;
+}
+
 interface BandResult {
   label: string;
   total: number;
@@ -105,7 +119,7 @@ function formatTime(iso: string) {
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<"backtest" | "builder" | "live" | "props" | "auto">("live");
+  const [tab, setTab] = useState<"backtest" | "builder" | "live" | "props" | "auto" | "picks">("live");
   const [bands, setBands] = useState<BandResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(true);
@@ -118,13 +132,20 @@ export default function Home() {
   const [propsLoading, setPropsLoading] = useState(false);
   const [propsLoaded, setPropsLoaded] = useState(false);
   const [edgeFilter, setEdgeFilter] = useState<number>(5);
-  const [hitRateFilter, setHitRateFilter] = useState<number>(90);
+  const [hitRateFilter, setHitRateFilter] = useState<number>(75);
   const [sportFilter, setSportFilter] = useState<"ALL" | "AFL">("ALL");
   const [confFilter, setConfFilter] = useState<number>(70);
   const [bookieFilter, setBookieFilter] = useState<string>("Best odds");
   const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
   const [emergencyPlayers, setEmergencyPlayers] = useState<Set<string>>(new Set());
   const [lineupsLoaded, setLineupsLoaded] = useState(false);
+
+  // Historical picks state
+  const [historicalPicks, setHistoricalPicks] = useState<HistoricalPick[]>([]);
+  const [picksLoading, setPicksLoading] = useState(false);
+  const [picksLoaded, setPicksLoaded] = useState(false);
+  const [picksStatFilter, setPicksStatFilter] = useState<"all" | "disposals" | "kicks" | "marks" | "handballs" | "tackles" | "goals">("all");
+  const [picksMinBayesian, setPicksMinBayesian] = useState<number>(75);
 
   // Manual multi evaluator state
   const [manualSearch, setManualSearch] = useState("");
@@ -135,6 +156,17 @@ export default function Home() {
   const [manualOdds, setManualOdds] = useState("");
   const [manualLookup, setManualLookup] = useState<null | { found: boolean; hitRate5: number; hitRate10: number; allTime: number; recentForm: number[]; seasonAvg: number; stale: boolean }>(null);
   const [manualLooking, setManualLooking] = useState(false);
+  const [bankroll, setBankroll] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("bankroll");
+      return saved ? parseInt(saved, 10) : 200;
+    }
+    return 200;
+  });
+  const [editingBankroll, setEditingBankroll] = useState(false);
+  const [bankrollInput, setBankrollInput] = useState("");
+  const [oddsBoostPct, setOddsBoostPct] = useState<number>(0);       // e.g. 10 = 10% boost
+  const [isBonusBet, setIsBonusBet] = useState(false);               // stake not returned on win
 
   useEffect(() => {
     fetch("/api/backtest")
@@ -153,6 +185,11 @@ export default function Home() {
         setLineupsLoaded(true);
       })
       .catch(() => setLineupsLoaded(true));
+
+    // Pre-load Top Picks so Model Multi is available on Auto Multi tab without visiting Top Picks first
+    fetch(`/api/player-picks?minBayesian=75`)
+      .then((r) => r.json())
+      .then((d) => { setHistoricalPicks(d.picks ?? []); setPicksLoaded(true); });
   }, []);
 
   function lineupStatus(playerName: string): "named" | "emergency" | "not-named" | "unknown" {
@@ -225,6 +262,8 @@ export default function Home() {
       const results: AutoMultiCombo[] = [];
 
       function combine(start: number, current: PlayerProp[]) {
+        // All legs must be from the same game (same-game multi only)
+        const gameMatchup = current[0]?.matchup;
         if (current.length === legCount) {
           let bestCombinedOdds = 0;
           let bestBookie = selectedBookie;
@@ -260,6 +299,7 @@ export default function Home() {
         }
         for (let i = start; i < eligible.length; i++) {
           if (current.some((p) => p.playerName === eligible[i].playerName)) continue;
+          if (gameMatchup && eligible[i].matchup !== gameMatchup) continue;
           current.push(eligible[i]);
           combine(i + 1, current);
           current.pop();
@@ -280,12 +320,59 @@ export default function Home() {
     }).slice(0, topN);
   }
 
-  // Pool: 90%+ hit rate with positive edge — grinder strategy
-  // Min odds $1.15 — legs below this barely move combined odds and aren't meaningful bets
+  // Bayesian rate: blended reliability score used consistently across all tabs
+  // Same formula as optimal line selection in the API — (10×L10 + 15×allTime) / 25
+  const bayesianRate = (p: PlayerProp) => Math.round(((10 * p.hitRate10 + 15 * p.hitRate) / 25) * 10) / 10;
+  const bayesianEdge = (p: PlayerProp) => Math.round((bayesianRate(p) - p.bookmakerImplied) * 10) / 10;
+
+  // Auto Multi pool: same Bayesian rate filter as Player Props and Top Picks
+  // Min odds $1.15 — legs below this barely move combined odds
   // Exclude cold form — last-10 hit rate 25+ points below all-time signals role/injury change
-  const autoPool = props.filter((p) => p.hitRate10 >= hitRateFilter && p.recentEdge > 0 && p.bestOdds >= 1.15 && !p.coldForm).slice(0, 12);
+  const autoPool = props.filter((p) => bayesianRate(p) >= hitRateFilter && bayesianEdge(p) > 0 && p.bestOdds >= 1.15 && !p.coldForm && lineupStatus(p.playerName) !== "not-named");
   const availableBookies = ["Best odds", ...getAvailableBookies(autoPool)];
   const allCombos = buildAllCombos(autoPool, bookieFilter);
+
+  // Model Multi: Top Picks converted to synthetic PlayerProps with estimated odds (no Odds API needed)
+  // Estimated odds = 1 / bayesianRate — conservative fair-value estimate before bookie margin
+  // Only include legs with estimated odds >= $1.08 (below this adds nothing meaningful to a multi)
+  const topPicksAsProps: PlayerProp[] = historicalPicks
+    .filter((p) => p.bayesianRate >= hitRateFilter)
+    .filter((p) => {
+      const ls = lineupStatus(p.playerName);
+      // When lineups are loaded, only include confirmed named starters
+      // When lineups aren't loaded yet, allow unknown through
+      return lineupsLoaded && namedPlayers.size > 0 ? ls === "named" : ls === "named" || ls === "unknown";
+    })
+    .map((p) => {
+      const estOdds = Math.round((1 / (p.bayesianRate / 100)) * 100) / 100;
+      return {
+        playerName: p.playerName,
+        matchup: "check Sportsbet",
+        commenceTime: new Date().toISOString(),
+        statType: p.statType,
+        statLabel: p.statType,
+        marketLine: p.suggestedThreshold - 0.5,
+        bestOdds: estOdds,
+        bestBookie: "Sportsbet (est.)",
+        bookmakerOdds: { "Sportsbet (est.)": estOdds },
+        isAlternateLine: false,
+        allPricedLines: [],
+        gamesAnalysed: p.gamesAnalysed,
+        hitRate: p.allTimeRate,
+        hitRate5: p.hitRate5,
+        hitRate10: p.hitRate10,
+        coldForm: false,
+        bookmakerImplied: Math.round((1 / estOdds) * 1000) / 10,
+        edge: 0,
+        recentEdge: 0,
+        seasonAvg: p.seasonAvg,
+        recentForm: p.recentForm,
+        thresholds: [],
+      } as PlayerProp;
+    })
+    .filter((p) => p.bestOdds >= 1.08);
+  // Cap to top 25 after lineup filter — buildAllCombos is O(n^legCount), too many entries hangs the browser
+  const modelMultiCombos = buildAllCombos(topPicksAsProps.slice(0, 25), "Best odds", 5, 10);
 
   const filteredGames = games.filter((g) => {
     const conf = g.squiggleConfidence ?? g.impliedWinPct;
@@ -305,6 +392,7 @@ export default function Home() {
       <div className="flex border-b border-gray-800 bg-gray-900">
         {[
           { key: "live", label: "Match Odds" },
+          { key: "picks", label: "Top Picks" },
           { key: "props", label: "Player Props" },
           { key: "auto", label: "Auto Multi" },
           { key: "builder", label: "My Multi" },
@@ -313,12 +401,18 @@ export default function Home() {
           <button
             key={key}
             onClick={() => {
-              setTab(key as "backtest" | "builder" | "live" | "props" | "auto");
+              setTab(key as "backtest" | "builder" | "live" | "props" | "auto" | "picks");
               if ((key === "props" || key === "auto") && !propsLoaded && !propsLoading) {
                 setPropsLoading(true);
                 fetch("/api/player-props")
                   .then((r) => r.json())
                   .then((d) => { setProps(d.props ?? []); setPropsLoading(false); setPropsLoaded(true); });
+              }
+              if (key === "picks" && !picksLoaded && !picksLoading) {
+                setPicksLoading(true);
+                fetch(`/api/player-picks?minBayesian=${picksMinBayesian}`)
+                  .then((r) => r.json())
+                  .then((d) => { setHistoricalPicks(d.picks ?? []); setPicksLoading(false); setPicksLoaded(true); });
               }
             }}
             className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -516,14 +610,14 @@ export default function Home() {
               <>
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
                   <p className="text-white font-medium mb-1">Grinder strategy — high strike rate, low variance</p>
-                  <p>Only legs where recent form gives 90%+ hit rate. Lower odds, but wins consistently. 4 legs at 90% = 65.6% multi strike rate. No AFL knowledge needed — pure numbers.</p>
+                  <p>Only legs where Bayesian reliability clears the threshold. Lower odds, but wins consistently. 4 legs at 80% = 41% strike rate. No AFL knowledge needed — pure numbers.</p>
                 </div>
 
                 {/* Hit rate threshold selector */}
                 <div>
-                  <div className="text-xs text-gray-500 mb-2">Minimum hit rate per leg:</div>
+                  <div className="text-xs text-gray-500 mb-2">Minimum Bayesian reliability per leg:</div>
                   <div className="flex gap-1.5">
-                    {[80, 85, 90, 95].map((hr) => (
+                    {[75, 80, 85, 90].map((hr) => (
                       <button
                         key={hr}
                         onClick={() => setHitRateFilter(hr)}
@@ -537,7 +631,7 @@ export default function Home() {
                   </div>
                   {autoPool.length > 0 && (
                     <p className="text-xs text-gray-500 mt-1.5">
-                      {autoPool.length} qualifying leg{autoPool.length !== 1 ? "s" : ""} at {hitRateFilter}%+ hit rate
+                      {autoPool.length} qualifying leg{autoPool.length !== 1 ? "s" : ""} at {hitRateFilter}%+ Bayesian reliability
                       {hitRateFilter === 90 && autoPool.length >= 4 && (
                         <span className="text-green-400 ml-2">· 4-leg strike rate: {Math.round(Math.pow(0.9, Math.min(autoPool.length, 4)) * 1000) / 10}%</span>
                       )}
@@ -683,6 +777,48 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* Model Multi — Top Picks with estimated odds */}
+                {picksLoaded && modelMultiCombos.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="bg-gray-900 border border-yellow-800 rounded-xl p-3">
+                      <div className="text-sm font-semibold text-yellow-400 mb-1">Model Multi — historical signal</div>
+                      <p className="text-xs text-gray-400">Built from Top Picks data. Odds are estimated from Bayesian hit rate — verify each leg price on Sportsbet pick-your-own before placing.</p>
+                    </div>
+                    <div className="space-y-3">
+                      {modelMultiCombos.slice(0, 5).map((combo, idx) => (
+                        <div key={idx} className="bg-gray-900 border border-yellow-900 rounded-xl p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <span className="text-white font-bold text-lg">{combo.legs.length}-leg</span>
+                              <span className="text-gray-400 text-sm ml-2">est. ~${combo.combinedOdds}</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-green-400 font-bold">{combo.strikeRate}%</div>
+                              <div className="text-xs text-gray-500">strike rate</div>
+                            </div>
+                          </div>
+                          <div className="space-y-1 mb-3">
+                            {combo.legs.map((prop) => (
+                              <div key={`${prop.playerName}-${prop.statType}`} className="flex items-center justify-between bg-gray-800 rounded px-3 py-1.5 text-xs">
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-white font-medium">{prop.playerName}</span>
+                                  <span className="text-gray-400 ml-1.5">{Math.ceil(prop.marketLine)}+ {prop.statLabel}</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0 ml-2">
+                                  <span className="text-green-400 font-semibold">{Math.round(((10 * prop.hitRate10 + 15 * prop.hitRate) / 25) * 10) / 10}%</span>
+                                  <span className="text-yellow-500 font-mono">~${prop.bestOdds}</span>
+                                  <span className="text-gray-600">est.</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-yellow-700 text-center">Check each price on Sportsbet → build in My Multi with real odds</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1.5">
                   <p><span className="text-white">Edge score</span> = Kelly fraction — how hard you&apos;re beating the bookmaker relative to the risk taken. Higher = better long-term growth regardless of leg count.</p>
                   <p><span className="text-white">EV / $100</span> = raw profit per $100, shown as context only. Not used for ranking — a big EV on a low-probability multi is misleading.</p>
@@ -698,105 +834,53 @@ export default function Home() {
         {/* MULTI BUILDER TAB */}
         {tab === "builder" && (
           <div className="space-y-4">
-            {multi.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
-                <div className="text-4xl mb-3">🏈</div>
-                <p className="font-medium text-white">No legs added yet</p>
-                <p className="text-sm mt-1">Go to <strong>Auto Multi</strong> to generate bets, or <strong>Live Odds</strong> to add match legs.</p>
-                <button
-                  onClick={() => setTab("auto")}
-                  className="mt-4 bg-green-500 text-black font-semibold px-5 py-2 rounded-lg text-sm"
-                >
-                  Generate Auto Multi →
-                </button>
+
+            {/* Bankroll setting */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-500">Betting bankroll</div>
+                {editingBankroll ? (
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-gray-400 text-sm">$</span>
+                    <input
+                      type="number"
+                      value={bankrollInput}
+                      onChange={(e) => setBankrollInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const v = parseInt(bankrollInput, 10);
+                          if (v > 0) { setBankroll(v); localStorage.setItem("bankroll", String(v)); }
+                          setEditingBankroll(false);
+                        }
+                        if (e.key === "Escape") setEditingBankroll(false);
+                      }}
+                      className="bg-gray-800 border border-green-500 rounded px-2 py-1 text-white text-sm w-24 focus:outline-none"
+                      autoFocus
+                    />
+                    <button onClick={() => {
+                      const v = parseInt(bankrollInput, 10);
+                      if (v > 0) { setBankroll(v); localStorage.setItem("bankroll", String(v)); }
+                      setEditingBankroll(false);
+                    }} className="text-green-400 text-xs font-semibold">Save</button>
+                  </div>
+                ) : (
+                  <div className="text-white font-bold text-lg">${bankroll.toLocaleString()}</div>
+                )}
               </div>
-            ) : (
-              <>
-                {/* Bookmaker consistency warning */}
-                {(() => {
-                  const bookies = [...new Set(multi.map((l) => l.bookie))];
-                  return bookies.length > 1 ? (
-                    <div className="bg-yellow-950 border border-yellow-700 rounded-xl p-3 text-sm text-yellow-300">
-                      ⚠️ Legs from multiple bookmakers ({bookies.join(", ")}). For a same-game multi, all legs must be at one provider — go to Auto Multi and select a specific bookmaker.
-                    </div>
-                  ) : (
-                    <div className="bg-green-950 border border-green-800 rounded-xl p-3 text-xs text-green-400">
-                      ✓ All legs at {bookies[0]} — placeable as a single multi.
-                    </div>
-                  );
-                })()}
+              <button
+                onClick={() => { setBankrollInput(String(bankroll)); setEditingBankroll(true); }}
+                className="text-xs text-gray-500 hover:text-green-400 border border-gray-700 rounded-lg px-3 py-1.5"
+              >
+                {editingBankroll ? "Editing…" : "Change"}
+              </button>
+            </div>
 
-                {/* Summary */}
-                <div className="bg-green-950 border border-green-800 rounded-xl p-4">
-                  <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <div className="text-2xl font-bold text-white">${combinedOdds}</div>
-                      <div className="text-green-300 text-xs mt-0.5">Combined odds</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-white">{strikeRate}%</div>
-                      <div className="text-green-300 text-xs mt-0.5">Est. strike rate</div>
-                    </div>
-                    <div>
-                      <div className={`text-2xl font-bold ${ev100 >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        {ev100 >= 0 ? "+" : ""}${ev100}
-                      </div>
-                      <div className="text-green-300 text-xs mt-0.5">EV per $100</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Legs */}
-                <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
-                    <h2 className="font-semibold">Your multi ({multi.length} legs)</h2>
-                    <button onClick={() => setMulti([])} className="text-red-400 text-xs hover:text-red-300">
-                      Clear all
-                    </button>
-                  </div>
-                  <div className="divide-y divide-gray-800">
-                    {multi.map((leg) => (
-                      <div key={leg.id} className="px-4 py-3 flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${
-                              leg.sport === "AFL" ? "bg-yellow-900 text-yellow-300" : "bg-blue-900 text-blue-300"
-                            }`}>
-                              {leg.sport}
-                            </span>
-                          </div>
-                          <div className="font-medium text-sm">{leg.tip}</div>
-                          <div className="text-gray-400 text-xs">{leg.match}</div>
-                          <div className="text-gray-500 text-xs mt-0.5">@ {leg.bookie}</div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-right">
-                            <div className="text-green-400 font-bold text-lg">${leg.odds}</div>
-                            <div className="text-gray-500 text-xs">{leg.confidence}% conf</div>
-                          </div>
-                          <button
-                            onClick={() => setMulti(multi.filter((l) => l.id !== leg.id))}
-                            className="text-gray-600 hover:text-red-400 text-xl leading-none"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 text-sm text-gray-400 space-y-1">
-                  <p>💡 All legs must be at the same bookmaker for a same-game multi.</p>
-                  <p>💡 Check for multi insurance promos before placing.</p>
-                </div>
-              </>
-            )}
-
-            {/* Manual leg evaluator */}
-            <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-              <h3 className="font-semibold text-white text-sm">Evaluate a leg from any platform</h3>
-              <p className="text-gray-500 text-xs">Enter a player, stat and threshold — we&apos;ll show you the L10 hit rate and edge.</p>
+            {/* Hero: Leg Evaluator */}
+            <div className="bg-gray-900 rounded-xl border border-green-800 p-4 space-y-3">
+              <div>
+                <h3 className="font-bold text-white text-base">Check a bet</h3>
+                <p className="text-gray-500 text-xs mt-0.5">Find a leg on Sportsbet — enter the details below to see if it&apos;s backed by the data.</p>
+              </div>
 
               {/* Player search */}
               <div className="relative">
@@ -817,15 +901,17 @@ export default function Home() {
                       setManualSuggestions([]);
                     }
                   }}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
                 />
                 {manualSuggestions.length > 0 && !manualPlayer && (
-                  <div className="absolute z-10 w-full bg-gray-800 border border-gray-700 rounded-lg mt-1 overflow-hidden">
+                  <div className="absolute z-10 w-full bg-gray-800 border border-gray-700 rounded-lg mt-1 overflow-hidden shadow-xl">
                     {manualSuggestions.map((name) => (
                       <button
                         key={name}
-                        onClick={() => { setManualPlayer(name); setManualSearch(name); setManualSuggestions([]); setManualLookup(null); }}
-                        className="w-full text-left px-3 py-2 text-sm text-white hover:bg-gray-700"
+                        onClick={() => {
+                          setManualPlayer(name); setManualSearch(name); setManualSuggestions([]); setManualLookup(null);
+                        }}
+                        className="w-full text-left px-3 py-2.5 text-sm text-white hover:bg-gray-700 border-b border-gray-700 last:border-0"
                       >
                         {name}
                       </button>
@@ -834,12 +920,12 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Stat + threshold + odds */}
+              {/* Stat + threshold + odds row */}
               <div className="grid grid-cols-3 gap-2">
                 <select
                   value={manualStat}
                   onChange={(e) => { setManualStat(e.target.value as typeof manualStat); setManualLookup(null); }}
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-green-500"
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2.5 text-sm text-white focus:outline-none focus:border-green-500"
                 >
                   {["disposals","kicks","marks","handballs","tackles","clearances","goals"].map((s) => (
                     <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
@@ -847,18 +933,18 @@ export default function Home() {
                 </select>
                 <input
                   type="number"
-                  placeholder="Threshold (e.g. 23)"
+                  placeholder="19+ threshold"
                   value={manualThreshold}
                   onChange={(e) => { setManualThreshold(e.target.value); setManualLookup(null); }}
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
                 />
                 <input
                   type="number"
                   step="0.01"
-                  placeholder="Odds (e.g. 1.85)"
+                  placeholder="Odds e.g. 1.85"
                   value={manualOdds}
                   onChange={(e) => setManualOdds(e.target.value)}
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
                 />
               </div>
 
@@ -873,81 +959,260 @@ export default function Home() {
                     .then((d) => { setManualLookup(d); setManualLooking(false); })
                     .catch(() => setManualLooking(false));
                 }}
-                className="w-full bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-black font-semibold py-2 rounded-lg text-sm"
+                className="w-full bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-black font-bold py-2.5 rounded-lg text-sm"
               >
-                {manualLooking ? "Looking up…" : "Check this bet"}
+                {manualLooking ? "Checking…" : "Check this bet"}
               </button>
 
               {/* Results */}
               {manualLookup && (
                 manualLookup.found === false ? (
-                  <p className="text-red-400 text-sm">Player not found in database — we may not have their stats yet.</p>
-                ) : (
-                  <div className="bg-gray-800 rounded-lg p-3 space-y-2">
-                    {manualLookup.stale && (
-                      <p className="text-yellow-400 text-xs">⚠️ Most recent game data is from before 2025 — treat with caution.</p>
-                    )}
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <div>
-                        <div className={`text-xl font-bold ${manualLookup.hitRate10 >= 70 ? "text-green-400" : manualLookup.hitRate10 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
-                          {manualLookup.hitRate10}%
+                  <p className="text-red-400 text-sm">Player not found — we may not have their stats yet.</p>
+                ) : (() => {
+                  const odds = parseFloat(manualOdds);
+                  const implied = odds > 1 ? Math.round((1 / odds) * 1000) / 10 : null;
+                  const edge = implied !== null ? Math.round((manualLookup.hitRate10 - implied) * 10) / 10 : null;
+                  const adjRate = (10 * manualLookup.hitRate10 + 15 * manualLookup.allTime) / 25;
+                  const kelly = (implied !== null && odds > 1)
+                    ? Math.max(0, Math.round(((adjRate / 100) * odds - 1) / (odds - 1) * 1000) / 10)
+                    : null;
+                  const halfKellyStake = kelly !== null ? Math.round((kelly / 100) * 0.5 * bankroll) : null;
+                  const verdict = edge === null ? null : edge >= 10 ? "BACK IT" : edge >= 0 ? "MARGINAL" : "AVOID";
+                  const verdictColor = verdict === "BACK IT" ? "bg-green-500 text-black" : verdict === "MARGINAL" ? "bg-yellow-500 text-black" : "bg-red-600 text-white";
+                  return (
+                    <div className="space-y-3">
+                      {manualLookup.stale && (
+                        <p className="text-yellow-400 text-xs">⚠️ Data is from before 2025 — treat with caution.</p>
+                      )}
+
+                      {/* Verdict banner */}
+                      {verdict && (
+                        <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${verdictColor}`}>
+                          <div>
+                            <div className="text-xl font-black">{verdict}</div>
+                            <div className="text-xs opacity-80 mt-0.5">
+                              {verdict === "BACK IT" ? `+${edge}% edge over bookmaker` : verdict === "MARGINAL" ? `Slight edge — only in a multi` : `Bookmaker has the edge by ${Math.abs(edge!)}%`}
+                            </div>
+                          </div>
+                          {halfKellyStake !== null && halfKellyStake > 0 && verdict !== "AVOID" && (
+                            <div className="text-right">
+                              <div className="text-2xl font-black">${halfKellyStake}</div>
+                              <div className="text-xs opacity-80">recommended stake</div>
+                            </div>
+                          )}
                         </div>
-                        <div className="text-gray-500 text-xs">L10 hit rate</div>
-                      </div>
-                      <div>
-                        <div className={`text-xl font-bold ${manualLookup.hitRate5 >= 70 ? "text-green-400" : manualLookup.hitRate5 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
-                          {manualLookup.hitRate5}%
+                      )}
+
+                      {/* Hit rate stats */}
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="bg-gray-800 rounded-lg py-2">
+                          <div className={`text-xl font-bold ${manualLookup.hitRate10 >= 70 ? "text-green-400" : manualLookup.hitRate10 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                            {manualLookup.hitRate10}%
+                          </div>
+                          <div className="text-gray-500 text-xs">L10 hit rate</div>
                         </div>
-                        <div className="text-gray-500 text-xs">L5 hit rate</div>
+                        <div className="bg-gray-800 rounded-lg py-2">
+                          <div className={`text-xl font-bold ${manualLookup.hitRate5 >= 70 ? "text-green-400" : manualLookup.hitRate5 >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                            {manualLookup.hitRate5}%
+                          </div>
+                          <div className="text-gray-500 text-xs">L5 hit rate</div>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg py-2">
+                          <div className="text-xl font-bold text-gray-400">{manualLookup.allTime}%</div>
+                          <div className="text-gray-500 text-xs">All-time</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-xl font-bold text-gray-400">{manualLookup.allTime}%</div>
-                        <div className="text-gray-500 text-xs">All-time</div>
+
+                      {/* Visual form dots */}
+                      <div className="bg-gray-800 rounded-lg px-3 py-2.5">
+                        <div className="text-xs text-gray-500 mb-2">Last 5 games — {manualStat}</div>
+                        <div className="flex items-end gap-2">
+                          {manualLookup.recentForm.map((val, i) => {
+                            const hit = val >= parseInt(manualThreshold, 10);
+                            return (
+                              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                                <div className="text-xs text-gray-400 font-mono">{val}</div>
+                                <div className={`w-full h-2 rounded-full ${hit ? "bg-green-500" : "bg-red-500"}`} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-2">Season avg: {manualLookup.seasonAvg} {manualStat}</div>
                       </div>
+
+                      {/* Kelly explanation */}
+                      {kelly !== null && kelly > 0 && (
+                        <div className="text-xs text-gray-600 leading-relaxed">
+                          Half-Kelly stake on ${bankroll.toLocaleString()} bankroll. Full Kelly would be ${Math.round(kelly / 100 * bankroll)} — halved to reduce variance.
+                        </div>
+                      )}
+
+                      {/* Add to multi */}
+                      {manualPlayer && manualThreshold && odds > 1 && manualLookup.found && (
+                        <button
+                          onClick={() => {
+                            setMulti([...multi, {
+                              id: `manual-${manualPlayer}-${manualStat}-${manualThreshold}-${Date.now()}`,
+                              tip: `${manualPlayer} ${manualThreshold}+ ${manualStat}`,
+                              confidence: manualLookup!.hitRate10,
+                              match: "Manual entry",
+                              sport: "AFL",
+                              odds,
+                              bookie: "Manual",
+                              confidenceSource: "stats",
+                            }]);
+                            setManualSearch(""); setManualPlayer(""); setManualThreshold(""); setManualOdds(""); setManualLookup(null);
+                          }}
+                          className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-lg text-sm"
+                        >
+                          + Add to multi ({manualLookup.hitRate10}% L10)
+                        </button>
+                      )}
                     </div>
-                    {manualOdds && parseFloat(manualOdds) > 1 && (() => {
-                      const implied = Math.round((1 / parseFloat(manualOdds)) * 1000) / 10;
-                      const edge = Math.round((manualLookup.hitRate10 - implied) * 10) / 10;
-                      return (
-                        <div className={`text-center rounded-lg py-2 px-3 ${edge > 0 ? "bg-green-950 border border-green-800" : "bg-red-950 border border-red-900"}`}>
-                          <span className={`text-lg font-bold ${edge > 0 ? "text-green-400" : "text-red-400"}`}>
-                            {edge > 0 ? "+" : ""}{edge}% L10 edge
-                          </span>
-                          <span className="text-gray-500 text-xs ml-2">({implied}% implied)</span>
-                          <p className={`text-xs mt-1 ${edge > 0 ? "text-green-300" : "text-red-300"}`}>
-                            {edge > 10 ? "Strong value — good leg" : edge > 0 ? "Slight edge — acceptable" : edge > -10 ? "Marginal — borderline" : "No value at this price"}
-                          </p>
-                        </div>
-                      );
-                    })()}
-                    <div className="text-xs text-gray-500">
-                      Last 5: {manualLookup.recentForm.join(", ")} · avg {manualLookup.seasonAvg}
-                    </div>
-                    {manualPlayer && manualThreshold && manualOdds && parseFloat(manualOdds) > 1 && manualLookup.found && (
-                      <button
-                        onClick={() => {
-                          const implied = Math.round((1 / parseFloat(manualOdds)) * 1000) / 10;
-                          setMulti([...multi, {
-                            id: `manual-${manualPlayer}-${manualStat}-${manualThreshold}-${Date.now()}`,
-                            tip: `${manualPlayer} ${manualThreshold}+ ${manualStat}`,
-                            confidence: manualLookup.hitRate10,
-                            match: "Manual entry",
-                            sport: "AFL",
-                            odds: parseFloat(manualOdds),
-                            bookie: "Manual",
-                            confidenceSource: "stats",
-                          }]);
-                          setManualSearch(""); setManualPlayer(""); setManualThreshold(""); setManualOdds(""); setManualLookup(null);
-                        }}
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-lg text-sm"
-                      >
-                        Add to multi ({manualLookup.hitRate10}% L10)
-                      </button>
-                    )}
-                  </div>
-                )
+                  );
+                })()
               )}
             </div>
+
+            {/* Multi legs + summary */}
+            {multi.length > 0 && (
+              <>
+                {/* Bookmaker consistency warning */}
+                {(() => {
+                  const bookies = [...new Set(multi.map((l) => l.bookie))];
+                  return bookies.length > 1 ? (
+                    <div className="bg-yellow-950 border border-yellow-700 rounded-xl p-3 text-sm text-yellow-300">
+                      ⚠️ Legs from multiple bookmakers ({bookies.join(", ")}). For a same-game multi all legs must be at one provider.
+                    </div>
+                  ) : (
+                    <div className="bg-green-950 border border-green-800 rounded-xl p-3 text-xs text-green-400">
+                      ✓ All legs at {bookies[0]} — placeable as a single multi.
+                    </div>
+                  );
+                })()}
+
+                {/* Boost / bonus bet controls */}
+                <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Promotions</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400 w-24 shrink-0">Odds boost</span>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {[0, 5, 10, 15, 20, 25].map((pct) => (
+                        <button
+                          key={pct}
+                          onClick={() => setOddsBoostPct(pct)}
+                          className={`px-2.5 py-1 rounded text-xs font-bold transition-colors ${oddsBoostPct === pct ? "bg-blue-500 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
+                        >
+                          {pct === 0 ? "None" : `+${pct}%`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400 w-24 shrink-0">Bonus bet</span>
+                    <button
+                      onClick={() => setIsBonusBet(!isBonusBet)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${isBonusBet ? "bg-blue-500" : "bg-gray-700"}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${isBonusBet ? "translate-x-4" : "translate-x-1"}`} />
+                    </button>
+                    <span className="text-xs text-gray-500">{isBonusBet ? "Stake not returned on win" : "Normal bet"}</span>
+                  </div>
+                </div>
+
+                {/* Combined multi summary */}
+                {(() => {
+                  const boostedOdds = oddsBoostPct > 0
+                    ? Math.round(combinedOdds * (1 + oddsBoostPct / 100) * 100) / 100
+                    : combinedOdds;
+                  // For a bonus bet, winnings = stake × (odds − 1) since stake isn't returned
+                  const effectiveEv = isBonusBet
+                    ? Math.round(((strikeRate / 100) * (boostedOdds - 1) * 100 - 100) * 100) / 100
+                    : Math.round(((strikeRate / 100) * boostedOdds * 100 - 100) * 100) / 100;
+                  const multiKelly = boostedOdds > 1
+                    ? Math.max(0, Math.round(((strikeRate / 100) * boostedOdds - 1) / (boostedOdds - 1) * 1000) / 10)
+                    : 0;
+                  const multiStake = Math.round((multiKelly / 100) * 0.5 * bankroll);
+                  const multiVerdict = effectiveEv >= 10 ? "BACK IT" : effectiveEv >= 0 ? "MARGINAL" : "AVOID";
+                  const multiColor = multiVerdict === "BACK IT" ? "border-green-700 bg-green-950" : multiVerdict === "MARGINAL" ? "border-yellow-700 bg-yellow-950" : "border-red-800 bg-red-950";
+                  return (
+                    <div className={`rounded-xl border p-4 ${multiColor}`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${multiVerdict === "BACK IT" ? "bg-green-500 text-black" : multiVerdict === "MARGINAL" ? "bg-yellow-500 text-black" : "bg-red-600 text-white"}`}>
+                            {multiVerdict}
+                          </span>
+                          <span className="text-gray-400 text-xs ml-2">{multi.length}-leg multi</span>
+                          {isBonusBet && <span className="text-blue-400 text-xs ml-2">· bonus bet</span>}
+                        </div>
+                        {multiStake > 0 && multiVerdict !== "AVOID" && (
+                          <div className="text-right">
+                            <div className="text-white font-black text-xl">${multiStake}</div>
+                            <div className="text-gray-500 text-xs">recommended stake</div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 text-center">
+                        <div>
+                          <div className="text-xl font-bold text-white">${boostedOdds}</div>
+                          {oddsBoostPct > 0 && (
+                            <div className="text-gray-500 text-xs line-through">${combinedOdds}</div>
+                          )}
+                          <div className="text-gray-400 text-xs mt-0.5">Combined odds</div>
+                        </div>
+                        <div>
+                          <div className="text-xl font-bold text-white">{strikeRate}%</div>
+                          <div className="text-gray-400 text-xs mt-0.5">Strike rate</div>
+                        </div>
+                        <div>
+                          <div className={`text-xl font-bold ${effectiveEv >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {effectiveEv >= 0 ? "+" : ""}${effectiveEv}
+                          </div>
+                          <div className="text-gray-400 text-xs mt-0.5">EV per $100</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Legs */}
+                <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
+                    <h2 className="font-semibold text-sm">Your legs ({multi.length})</h2>
+                    <button onClick={() => setMulti([])} className="text-red-400 text-xs hover:text-red-300">
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="divide-y divide-gray-800">
+                    {multi.map((leg) => (
+                      <div key={leg.id} className="px-4 py-3 flex items-center justify-between">
+                        <div>
+                          <div className="font-medium text-sm">{leg.tip}</div>
+                          <div className="text-gray-500 text-xs mt-0.5">@ {leg.bookie} · {leg.confidence}% L10</div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <div className="text-green-400 font-bold">${leg.odds}</div>
+                          </div>
+                          <button
+                            onClick={() => setMulti(multi.filter((l) => l.id !== leg.id))}
+                            className="text-gray-600 hover:text-red-400 text-xl leading-none"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 text-xs text-gray-500">
+                  💡 All legs must be at the same bookmaker for a same-game multi. Check for multi insurance promos before placing.
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -987,10 +1252,10 @@ export default function Home() {
                   ))}
                 </div>
 
-                {/* Edge filter */}
+                {/* Bayesian edge filter — same metric as Auto Multi and Top Picks */}
                 <div className="flex gap-2 items-center">
-                  <span className="text-xs text-gray-500">Min edge:</span>
-                  {[5, 10, 15, 20].map((e) => (
+                  <span className="text-xs text-gray-500">Min Bayesian edge:</span>
+                  {[0, 5, 10, 15].map((e) => (
                     <button
                       key={e}
                       onClick={() => setEdgeFilter(e)}
@@ -998,17 +1263,17 @@ export default function Home() {
                         edgeFilter === e ? "bg-green-500 text-black" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
                     >
-                      +{e}%
+                      {e === 0 ? "Any" : `+${e}%`}
                     </button>
                   ))}
                 </div>
 
                 <p className="text-gray-500 text-xs">
-                  {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).length} bets · {edgeFilter}%+ edge · Tap to add to multi
+                  {props.filter((p) => bayesianEdge(p) >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).length} bets · Bayesian edge {edgeFilter > 0 ? `+${edgeFilter}%+` : "any"} · Tap to add to multi
                 </p>
 
-                {props.filter((p) => p.edge >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).sort((a, b) => {
-                  // Named players first, then by game time (soonest first), then by edge
+                {props.filter((p) => bayesianEdge(p) >= edgeFilter && (statFilter === "all" || p.statType === statFilter)).sort((a, b) => {
+                  // Named players first, then by game time (soonest first), then by Bayesian edge
                   const namedRank = (p: PlayerProp) => {
                     const ls = lineupStatus(p.playerName);
                     if (ls === "named") return 0;
@@ -1020,7 +1285,7 @@ export default function Home() {
                   if (nDiff !== 0) return nDiff;
                   const tDiff = new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
                   if (tDiff !== 0) return tDiff;
-                  return b.recentEdge - a.recentEdge;
+                  return bayesianEdge(b) - bayesianEdge(a);
                 }).map((prop) => {
                   const propId = `prop-${prop.playerName}-${prop.statType}`;
                   const inMulti = !!multi.find((l) => l.id === propId);
@@ -1233,6 +1498,119 @@ export default function Home() {
                 <p className="font-medium text-white">Player prop analysis</p>
                 <p className="text-sm mt-1 mb-4">Compares real hit rates vs bookmaker lines across 3 seasons of data.</p>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* TOP PICKS TAB — historical signal layer, independent of Odds API */}
+        {tab === "picks" && (
+          <div className="space-y-3">
+            {picksLoading ? (
+              <div className="text-center py-16 text-gray-400">
+                <div className="text-4xl mb-3">🔍</div>
+                <p className="font-medium text-white">Scanning all players…</p>
+                <p className="text-sm mt-1 text-gray-500">Finding optimal threshold per player across every stat.</p>
+              </div>
+            ) : (
+              <>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-sm text-gray-400">
+                  <p className="font-medium text-white mb-1">Model-identified value picks</p>
+                  <p>These players have strong historical data at the suggested line — regardless of what the Odds API has priced. Check Sportsbet pick-your-own for current odds, then add to My Multi.</p>
+                </div>
+
+                {/* Stat filter */}
+                <div className="flex gap-1 flex-wrap">
+                  {(["all", "disposals", "kicks", "marks", "handballs", "tackles", "goals"] as const).map((s) => (
+                    <button key={s} onClick={() => setPicksStatFilter(s)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                        picksStatFilter === s ? "bg-blue-500 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      }`}>
+                      {s === "all" ? "All stats" : s}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Bayesian threshold filter */}
+                <div className="flex gap-2 items-center">
+                  <span className="text-xs text-gray-500">Min Bayesian:</span>
+                  {[70, 75, 80, 85].map((b) => (
+                    <button key={b} onClick={() => {
+                      setPicksMinBayesian(b);
+                      setPicksLoading(true);
+                      fetch(`/api/player-picks?minBayesian=${b}`)
+                        .then((r) => r.json())
+                        .then((d) => { setHistoricalPicks(d.picks ?? []); setPicksLoading(false); });
+                    }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        picksMinBayesian === b ? "bg-green-500 text-black" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      }`}>
+                      {b}%+
+                    </button>
+                  ))}
+                </div>
+
+                {(() => {
+                  const filtered = historicalPicks.filter(
+                    (p) => picksStatFilter === "all" || p.statType === picksStatFilter
+                  );
+                  return (
+                    <>
+                      <p className="text-gray-500 text-xs">{filtered.length} picks · Bayesian {picksMinBayesian}%+ · Tap line to add to My Multi</p>
+                      <div className="space-y-2">
+                        {filtered.map((pick) => {
+                          const formColor = (val: number) => val >= pick.suggestedThreshold ? "bg-green-500" : "bg-red-500";
+                          return (
+                            <div key={`${pick.playerName}-${pick.statType}`}
+                              className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold text-white">{pick.playerName}</div>
+                                  <div className="text-green-400 font-bold text-sm mt-0.5">{pick.suggestedLine}</div>
+                                  <div className="text-xs text-gray-500 mt-0.5">Season avg: {pick.seasonAvg} · {pick.gamesAnalysed} games</div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-2xl font-bold text-white">{pick.bayesianRate}%</div>
+                                  <div className="text-xs text-gray-400">Bayesian</div>
+                                </div>
+                              </div>
+
+                              {/* Stat bars */}
+                              <div className="flex gap-1 mt-3 items-end">
+                                {pick.recentForm.map((val, i) => (
+                                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                                    <div className="text-xs text-gray-400 font-mono">{val}</div>
+                                    <div className={`w-full h-2 rounded-full ${formColor(val)}`} />
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-xs text-gray-600 mt-1">← last 5 games</div>
+
+                              {/* Hit rate row */}
+                              <div className="flex gap-3 mt-3 text-xs">
+                                <span className="text-gray-400">L5: <span className="text-white font-semibold">{pick.hitRate5}%</span></span>
+                                <span className="text-gray-400">L10: <span className="text-white font-semibold">{pick.hitRate10}%</span></span>
+                                <span className="text-gray-400">All: <span className="text-white font-semibold">{pick.allTimeRate}%</span></span>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  setManualPlayer(pick.playerName);
+                                  setManualStat(pick.statType as "disposals"|"kicks"|"marks"|"handballs"|"tackles"|"clearances"|"goals");
+                                  setManualThreshold(String(pick.suggestedThreshold));
+                                  setTab("builder");
+                                }}
+                                className="mt-3 w-full py-2 rounded-lg bg-green-500 text-black text-xs font-bold hover:bg-green-400 transition-colors"
+                              >
+                                Add to My Multi →
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </>
             )}
           </div>
         )}

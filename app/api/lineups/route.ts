@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
 
 const FOOTYWIRE_SELECTIONS = "https://www.footywire.com/afl/footy/afl_team_selections";
 
@@ -90,6 +92,16 @@ function parseLineups(html: string): LineupData {
 
 export async function GET(request: Request) {
   const debug = new URL(request.url).searchParams.has("debug");
+
+  // Manual override takes priority — used when confirmed lineups are known before footywire updates
+  const overridePath = join(process.cwd(), "data", "lineups-override.json");
+  if (!debug && existsSync(overridePath)) {
+    try {
+      const data = JSON.parse(readFileSync(overridePath, "utf8"));
+      return NextResponse.json(data);
+    } catch { /* fall through to scrape */ }
+  }
+
   try {
     const res = await fetch(FOOTYWIRE_SELECTIONS, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; afl-multi-builder/1.0)" },

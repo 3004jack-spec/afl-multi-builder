@@ -9,6 +9,18 @@ type StatType = "disposals" | "goals" | "marks" | "kicks" | "handballs" | "tackl
 
 interface StatDef { stat: StatType; label: string; }
 
+interface StoredGame {
+  year: number;
+  round: string;
+  disposals?: number;
+  kicks?: number;
+  marks?: number;
+  handballs?: number;
+  goals?: number;
+  tackles?: number;
+  clearances?: number;
+}
+
 // Each entry fetched as a separate API call per event so one invalid market can't block others.
 // player_disposals_alternate fetched separately — only available closer to game day.
 const MARKET_STAT: Record<string, StatDef> = {
@@ -44,9 +56,12 @@ interface PricedLine {
   bookmakerOdds: Record<string, number>;
   bestOdds: number;
   bestBookie: string;
-  hitRate: number;       // recency-weighted hit rate at this line
+  hitRate: number;       // recency-weighted all-time hit rate at this line
+  hitRate10: number;     // straight L10 hit rate at this line
+  bayesianRate: number;  // (10×L10 + 15×allTime) / 25 — blended reliability estimate
   bookmakerImplied: number;
-  edge: number;
+  edge: number;          // allTime edge
+  bayesianEdge: number;  // bayesianRate − implied — used to pick the optimal line
 }
 
 interface PlayerProp {
@@ -101,6 +116,39 @@ function loadPlayerStats(): Record<string, StoredPlayer> {
   } catch {
     return {};
   }
+}
+
+function parseRound(r: string): number {
+  const n = parseInt(r);
+  if (!isNaN(n)) return n;
+  const finals: Record<string, number> = { EF: 25, SF: 26, PF: 27, GF: 28 };
+  return finals[r.toUpperCase()] ?? 99;
+}
+
+/**
+ * Returns stat values from only "relevant" games:
+ * - Last 3 seasons (guards against old club/position data)
+ * - Per season, if a gap of ≥5 rounds exists, drops pre-gap games (guards against injury returns)
+ */
+function relevantStatValues(games: StoredGame[], stat: StatType, currentYear: number): number[] {
+  const minYear = currentYear - 2;
+  const filtered = games.filter(g => g.year >= minYear);
+  const years = [...new Set(filtered.map(g => g.year))].sort((a, b) => a - b);
+  const result: StoredGame[] = [];
+  for (const year of years) {
+    const season = filtered
+      .filter(g => g.year === year)
+      .sort((a, b) => parseRound(a.round) - parseRound(b.round));
+    let cutIndex = 0;
+    for (let i = 1; i < season.length; i++) {
+      if (parseRound(season[i].round) - parseRound(season[i - 1].round) >= 5) cutIndex = i;
+    }
+    result.push(...season.slice(cutIndex));
+  }
+  return result.map(g => {
+    const v = (g as unknown as Record<string, unknown>)[stat];
+    return typeof v === "number" ? v : 0;
+  });
 }
 
 /**
@@ -226,39 +274,59 @@ export async function GET() {
     const mostRecentYear = storedPlayer.games[storedPlayer.games.length - 1].year;
     if (mostRecentYear < 2025) continue;
 
+    const currentYear = new Date().getFullYear();
     const statValues = storedPlayer.games.map((g) => {
       const v = (g as unknown as Record<string, unknown>)[entry.statType];
       return typeof v === "number" ? v : 0;
     });
     const n = statValues.length;
 
+    // Relevant prior values: 3-season cap + injury gap detection
+    const priorValues = relevantStatValues(storedPlayer.games as StoredGame[], entry.statType, currentYear);
+    const priorN = priorValues.length || 1;
+
     // Build PricedLine array for all available lines
+    const last10Values = statValues.slice(-10);
     const pricedLines: PricedLine[] = [];
     for (const [line, bookieOdds] of entry.lines.entries()) {
       const threshold = Math.ceil(line); // line 24.5 → threshold 25
       const hr = weightedHitRate(statValues, threshold);
-      const entries = Object.entries(bookieOdds).sort((a, b) => b[1] - a[1]);
-      const [bestBookie, bestOdds] = entries[0];
+      const hr10 = last10Values.length
+        ? Math.round((last10Values.filter(v => v >= threshold).length / last10Values.length) * 1000) / 10
+        : hr;
+      // Bayesian blend: L10 (k=10) + smart prior (k=25, skeptic-shrunk toward 65%)
+      // Prior uses only relevant games (3-season cap + injury gaps) + 10 pseudo-games at 65%
+      // to stop small perfect samples (e.g. 13/13) from reading as genuinely 100% reliable.
+      const rawPrior = weightedHitRate(priorValues, threshold);
+      const shrunkPrior = Math.round((rawPrior * priorN + 65 * 10) / (priorN + 10) * 10) / 10;
+      const bayesianRate = Math.round(((10 * hr10 + 25 * shrunkPrior) / 35) * 10) / 10;
+      const lineEntries = Object.entries(bookieOdds).sort((a, b) => b[1] - a[1]);
+      const [bestBookie, bestOdds] = lineEntries[0];
       const implied = Math.round((1 / bestOdds) * 1000) / 10;
       const edge = Math.round((hr - implied) * 10) / 10;
+      const bayesianEdge = Math.round((bayesianRate - implied) * 10) / 10;
       pricedLines.push({
         line,
         bookmakerOdds: bookieOdds,
         bestOdds,
         bestBookie,
         hitRate: hr,
+        hitRate10: hr10,
+        bayesianRate,
         bookmakerImplied: implied,
         edge,
+        bayesianEdge,
       });
     }
 
     if (pricedLines.length === 0) continue;
 
-    // Pick the line with the best edge (this is the "pick your own line" feature)
-    pricedLines.sort((a, b) => b.edge - a.edge);
+    // Pick the line with the best Bayesian edge — balances L10 reliability with all-time hit rate
+    // Pure edge alone would favour high-line/high-odds bets that are less reliable in a multi context
+    pricedLines.sort((a, b) => b.bayesianEdge - a.bayesianEdge);
     const best = pricedLines[0];
 
-    if (best.edge <= 0) continue; // must have some edge — pure hit rate without value isn't useful
+    if (best.bayesianEdge <= 0) continue; // Bayesian edge must be positive — raw edge alone isn't enough
 
     // Detect if best line differs from the main (non-alternate) line
     // Main line = the one closest to median of all lines
@@ -270,15 +338,18 @@ export async function GET() {
     const recentForm = statValues.slice(-5);
     const threshold = Math.ceil(best.line);
     const last5 = statValues.slice(-5);
-    const last10 = statValues.slice(-10);
     const hitRate5 = last5.length ? Math.round((last5.filter(v => v >= threshold).length / last5.length) * 1000) / 10 : best.hitRate;
-    const hitRate10 = last10.length ? Math.round((last10.filter(v => v >= threshold).length / last10.length) * 1000) / 10 : best.hitRate;
+    const hitRate10 = best.hitRate10; // already computed per-line above
     const coldForm = best.hitRate - hitRate10 >= 25;
     const recentEdge = Math.round((hitRate10 - best.bookmakerImplied) * 10) / 10;
     const thresholds = buildThresholds(statValues);
 
     // Require positive recent edge — all-time edge alone isn't enough
     if (recentEdge <= 0) continue;
+
+    // Require season average >= threshold — filters out players hitting the line on a streak
+    // but whose underlying average sits below it (regression bait, not genuine edge)
+    if (seasonAvg < threshold) continue;
 
     props.push({
       playerName,
@@ -306,6 +377,7 @@ export async function GET() {
     });
   }
 
+  // Sort by Bayesian edge — the optimal line's blended reliability minus implied probability
   props.sort((a, b) => b.recentEdge - a.recentEdge);
   return NextResponse.json({ props });
 }
