@@ -213,8 +213,11 @@ export default function Home() {
     ]).finally(() => setLoading(false));
   }, [minBayesian]);
 
-  function lineupOk(name: string) {
+  function lineupOk(name: string, gameNames?: string[]) {
     if (!lineupsLoaded || namedPlayers.size === 0) return true;
+    // Only apply lineup filter if at least one player from this game is in the lineup data.
+    // Prevents stale lineups from a different game blocking all legs.
+    if (gameNames && !gameNames.some(n => namedPlayers.has(n))) return true;
     return namedPlayers.has(name);
   }
 
@@ -232,6 +235,11 @@ export default function Home() {
       if (!a.commenceTime) return 1;
       if (!b.commenceTime) return -1;
       return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
+    }).filter(g => {
+      // Show games happening within the next 48 hours, or if no time known show all
+      if (!g.commenceTime) return true;
+      const diff = new Date(g.commenceTime).getTime() - Date.now();
+      return diff > -3 * 60 * 60 * 1000 && diff < 48 * 60 * 60 * 1000; // started <3h ago or upcoming 48h
     });
   }, [picks, games]);
 
@@ -242,6 +250,7 @@ export default function Home() {
   function legsForGame(matchup: string): GameLeg[] {
     const seen = new Set<string>();
     const legs: GameLeg[] = [];
+    const gamePlayerNames = picks.filter(p => p.matchup === matchup).map(p => p.playerName);
 
     // 1. Props legs — threshold and odds are correctly matched by the API
     for (const p of props) {
@@ -253,7 +262,7 @@ export default function Home() {
         (gameParts[1].includes(propParts[1].split(" ")[0]) || propParts[1].includes(gameParts[1].split(" ")[0]))
       );
       if (!matchesGame) continue;
-      if (!lineupOk(p.playerName)) continue;
+      if (!lineupOk(p.playerName, gamePlayerNames)) continue;
       if (p.bayesianEdge <= 0 || p.coldForm) continue;
 
       const key = `${p.playerName}::${p.statType}`;
@@ -278,7 +287,7 @@ export default function Home() {
     // 2. Supplement with picks for players not covered by props (estimated odds)
     for (const p of picks) {
       if (p.matchup !== matchup) continue;
-      if (!lineupOk(p.playerName)) continue;
+      if (!lineupOk(p.playerName, gamePlayerNames)) continue;
       const key = `${p.playerName}::${p.statType}`;
       if (seen.has(key)) continue; // already covered by live props
       const estOdds = Math.round((100 / p.bayesianRate) * 100) / 100;
