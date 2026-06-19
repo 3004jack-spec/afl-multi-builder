@@ -9,18 +9,6 @@ type StatType = "disposals" | "goals" | "marks" | "kicks" | "handballs" | "tackl
 
 interface StatDef { stat: StatType; label: string; }
 
-interface StoredGame {
-  year: number;
-  round: string;
-  disposals?: number;
-  kicks?: number;
-  marks?: number;
-  handballs?: number;
-  goals?: number;
-  tackles?: number;
-  clearances?: number;
-}
-
 // Each entry fetched as a separate API call per event so one invalid market can't block others.
 // player_disposals_alternate fetched separately — only available closer to game day.
 const MARKET_STAT: Record<string, StatDef> = {
