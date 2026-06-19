@@ -106,6 +106,25 @@ function loadPlayerStats(): Record<string, StoredPlayer> {
   }
 }
 
+interface SportsbetOdds {
+  fetchedAt: string;
+  matches: Array<{
+    matchup: string;
+    url: string;
+    markets: Record<string, Record<string, Record<string, number>>>;
+  }>;
+}
+
+function loadSportsbetOdds(): SportsbetOdds | null {
+  const filePath = join(process.cwd(), "data", "sportsbet-odds.json");
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function parseRound(r: string): number {
   const n = parseInt(r);
   if (!isNaN(n)) return n;
@@ -229,8 +248,15 @@ export async function GET() {
     }
   }
 
+  // Build a matchup → commenceTime lookup from events for Sportsbet cross-referencing
+  const matchupTimeMap = new Map<string, string>();
+  for (const event of events as Array<{ id: string; home_team: string; away_team: string; commence_time: string }>) {
+    matchupTimeMap.set(`${event.home_team} v ${event.away_team}`, event.commence_time);
+    matchupTimeMap.set(`${event.away_team} v ${event.home_team}`, event.commence_time);
+  }
+
   await Promise.all(
-    events.map(async (event: { id: string; home_team: string; away_team: string; commence_time: string }) => {
+    (events as Array<{ id: string; home_team: string; away_team: string; commence_time: string }>).map(async (event) => {
       const matchup = `${event.home_team} v ${event.away_team}`;
       const commenceTime = event.commence_time;
       const baseUrl = `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&oddsFormat=decimal`;
@@ -250,6 +276,40 @@ export async function GET() {
       } catch { /* skip */ }
     })
   );
+
+  // Ingest real Sportsbet prices — covers kicks/handballs/clearances not in The Odds API
+  const sbOdds = loadSportsbetOdds();
+  if (sbOdds) {
+    for (const match of sbOdds.matches) {
+      // Try to find commenceTime by matching the matchup string (fuzzy — Sportsbet names differ slightly)
+      let commenceTime = matchupTimeMap.get(match.matchup) ?? "";
+      if (!commenceTime) {
+        // Try reversed team order
+        const parts = match.matchup.split(" v ");
+        if (parts.length === 2) commenceTime = matchupTimeMap.get(`${parts[1]} v ${parts[0]}`) ?? "";
+      }
+
+      for (const [playerName, statMap] of Object.entries(match.markets)) {
+        for (const [statKey, thresholds] of Object.entries(statMap)) {
+          const stat = statKey as StatType;
+          const mapKey = `${playerName}::${stat}`;
+          let entry = playerLineMap.get(mapKey);
+          if (!entry) {
+            entry = { matchup: match.matchup, commenceTime, statType: stat, statLabel: stat, lines: new Map() };
+            playerLineMap.set(mapKey, entry);
+          }
+          for (const [threshStr, price] of Object.entries(thresholds)) {
+            const threshold = parseInt(threshStr);
+            if (isNaN(threshold) || price < 1.01) continue;
+            const line = threshold - 0.5; // Sportsbet "18+" → line 17.5
+            const lineBookies = entry.lines.get(line) ?? {};
+            lineBookies["Sportsbet"] = price;
+            entry.lines.set(line, lineBookies);
+          }
+        }
+      }
+    }
+  }
 
   const props: PlayerProp[] = [];
 
