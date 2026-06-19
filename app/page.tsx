@@ -95,10 +95,12 @@ interface PlayerProp {
   hitRate: number;
   hitRate5: number;
   hitRate10: number;
+  bayesianRate: number;
   coldForm: boolean;
   bookmakerImplied: number;
   edge: number;
   recentEdge: number;
+  bayesianEdge: number;
   recentForm: number[];
   seasonAvg: number;
   thresholds: ThresholdPoint[];
@@ -248,7 +250,7 @@ export default function Home() {
   }
 
   // Build combos for a specific bookmaker (or best single bookie across all legs)
-  function buildAllCombos(pool: PlayerProp[], selectedBookie: string, maxLegs = 6, topN = 20): AutoMultiCombo[] {
+  function buildAllCombos(pool: PlayerProp[], selectedBookie: string, maxLegs = 6, topN = 50): AutoMultiCombo[] {
     const eligible = selectedBookie === "Best odds"
       ? pool
       : pool.filter((p) => p.bookmakerOdds[selectedBookie] !== undefined);
@@ -285,11 +287,7 @@ export default function Home() {
           }
 
           const combinedOdds = Math.round(bestCombinedOdds * 100) / 100;
-          // Bayesian shrinkage: blend L10 toward all-time using k=15 prior games.
-          // Prevents 100% L10 from being taken literally — true prob is closer to 79-85%.
-          // Formula: (10 * hitRate10 + 15 * hitRate) / 25
-          const adjustedRate = (p: PlayerProp) => (10 * p.hitRate10 + 15 * p.hitRate) / 25;
-          const strikeRate = Math.round(current.reduce((a, p) => a * (adjustedRate(p) / 100), 1) * 1000) / 10;
+          const strikeRate = Math.round(current.reduce((a, p) => a * (p.bayesianRate / 100), 1) * 1000) / 10;
           const ev100 = Math.round(((strikeRate / 100) * combinedOdds * 100 - 100) * 10) / 10;
           const kelly = combinedOdds > 1
             ? Math.round(((strikeRate / 100) * combinedOdds - 1) / (combinedOdds - 1) * 1000) / 10
@@ -308,7 +306,7 @@ export default function Home() {
 
       combine(0, []);
       results.sort((a, b) => b.kelly - a.kelly);
-      allResults.push(...results.slice(0, 3));
+      allResults.push(...results.slice(0, 10));
     }
 
     // Sort by soonest game first, then by kelly within same date
@@ -320,10 +318,9 @@ export default function Home() {
     }).slice(0, topN);
   }
 
-  // Bayesian rate: blended reliability score used consistently across all tabs
-  // Same formula as optimal line selection in the API — (10×L10 + 15×allTime) / 25
-  const bayesianRate = (p: PlayerProp) => Math.round(((10 * p.hitRate10 + 15 * p.hitRate) / 25) * 10) / 10;
-  const bayesianEdge = (p: PlayerProp) => Math.round((bayesianRate(p) - p.bookmakerImplied) * 10) / 10;
+  // Use API-computed bayesianRate and bayesianEdge directly — already uses (10×L10 + 25×shrunkPrior)/35
+  const bayesianRate = (p: PlayerProp) => p.bayesianRate;
+  const bayesianEdge = (p: PlayerProp) => p.bayesianEdge;
 
   // Auto Multi pool: same Bayesian rate filter as Player Props and Top Picks
   // Min odds $1.15 — legs below this barely move combined odds
@@ -344,30 +341,36 @@ export default function Home() {
       return lineupsLoaded && namedPlayers.size > 0 ? ls === "named" : ls === "named" || ls === "unknown";
     })
     .map((p) => {
+      // Look up live match data for this player from props (has real matchup, odds, commenceTime)
+      const liveProp = props.find((lp) => lp.playerName === p.playerName && lp.statType === p.statType);
       const estOdds = Math.round((1 / (p.bayesianRate / 100)) * 100) / 100;
+      const bestOdds = liveProp?.bestOdds ?? estOdds;
+      const implied = Math.round((1 / bestOdds) * 1000) / 10;
       return {
         playerName: p.playerName,
-        matchup: "check Sportsbet",
-        commenceTime: new Date().toISOString(),
+        matchup: liveProp?.matchup ?? "",
+        commenceTime: liveProp?.commenceTime ?? new Date().toISOString(),
         statType: p.statType,
         statLabel: p.statType,
-        marketLine: p.suggestedThreshold - 0.5,
-        bestOdds: estOdds,
-        bestBookie: "Sportsbet (est.)",
-        bookmakerOdds: { "Sportsbet (est.)": estOdds },
-        isAlternateLine: false,
-        allPricedLines: [],
+        marketLine: liveProp?.marketLine ?? (p.suggestedThreshold - 0.5),
+        bestOdds,
+        bestBookie: liveProp?.bestBookie ?? "Sportsbet (est.)",
+        bookmakerOdds: liveProp?.bookmakerOdds ?? { "Sportsbet (est.)": estOdds },
+        isAlternateLine: liveProp?.isAlternateLine ?? false,
+        allPricedLines: liveProp?.allPricedLines ?? [],
         gamesAnalysed: p.gamesAnalysed,
         hitRate: p.allTimeRate,
         hitRate5: p.hitRate5,
         hitRate10: p.hitRate10,
+        bayesianRate: p.bayesianRate,
         coldForm: false,
-        bookmakerImplied: Math.round((1 / estOdds) * 1000) / 10,
-        edge: 0,
-        recentEdge: 0,
+        bookmakerImplied: implied,
+        edge: liveProp?.edge ?? 0,
+        recentEdge: liveProp?.recentEdge ?? 0,
+        bayesianEdge: Math.round((p.bayesianRate - implied) * 10) / 10,
         seasonAvg: p.seasonAvg,
         recentForm: p.recentForm,
-        thresholds: [],
+        thresholds: liveProp?.thresholds ?? [],
       } as PlayerProp;
     })
     .filter((p) => p.bestOdds >= 1.08);
@@ -1559,12 +1562,16 @@ export default function Home() {
                       <div className="space-y-2">
                         {filtered.map((pick) => {
                           const formColor = (val: number) => val >= pick.suggestedThreshold ? "bg-green-500" : "bg-red-500";
+                          const liveProp = props.find((lp) => lp.playerName === pick.playerName && lp.statType === pick.statType);
                           return (
                             <div key={`${pick.playerName}-${pick.statType}`}
                               className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <div className="font-semibold text-white">{pick.playerName}</div>
+                                  {liveProp?.matchup && (
+                                    <div className="text-xs text-blue-400 mt-0.5">{liveProp.matchup}</div>
+                                  )}
                                   <div className="text-green-400 font-bold text-sm mt-0.5">{pick.suggestedLine}</div>
                                   <div className="text-xs text-gray-500 mt-0.5">Season avg: {pick.seasonAvg} · {pick.gamesAnalysed} games</div>
                                 </div>

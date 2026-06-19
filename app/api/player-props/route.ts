@@ -68,10 +68,12 @@ interface PlayerProp {
   hitRate: number;       // recency-weighted all-time
   hitRate5: number;      // straight hit rate last 5 games
   hitRate10: number;     // straight hit rate last 10 games
+  bayesianRate: number;  // (10×L10 + 25×shrunkPrior) / 35 — primary reliability estimate
   coldForm: boolean;     // true when last-10 hit rate is 25+ points below all-time
   bookmakerImplied: number;
-  edge: number;          // all-time weighted edge (used by Auto Multi)
-  recentEdge: number;    // L10 hit rate minus bookmaker implied — primary display metric
+  edge: number;          // all-time weighted edge
+  recentEdge: number;    // L10 hit rate minus bookmaker implied
+  bayesianEdge: number;  // bayesianRate − implied — used to rank and filter
   seasonAvg: number;
   recentForm: number[];
   thresholds: ThresholdPoint[];
@@ -415,10 +417,12 @@ export async function GET() {
       hitRate: best.hitRate,
       hitRate5,
       hitRate10,
+      bayesianRate: best.bayesianRate,
       coldForm,
       bookmakerImplied: best.bookmakerImplied,
       edge: best.edge,
       recentEdge,
+      bayesianEdge: best.bayesianEdge,
       seasonAvg,
       recentForm,
       thresholds,
