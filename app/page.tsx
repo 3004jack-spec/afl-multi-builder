@@ -244,9 +244,9 @@ export default function Home() {
   const [bankroll, setBankroll] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("bankroll");
-      return saved ? parseInt(saved, 10) : 200;
+      return saved ? parseFloat(saved) : 50.33;
     }
-    return 200;
+    return 50.33;
   });
   const [editingBankroll, setEditingBankroll] = useState(false);
   const [bankrollInput, setBankrollInput] = useState("");
@@ -379,7 +379,7 @@ export default function Home() {
             {editingBankroll ? (
               <form onSubmit={e => {
                 e.preventDefault();
-                const v = parseInt(bankrollInput);
+                const v = parseFloat(bankrollInput);
                 if (!isNaN(v) && v > 0) { setBankroll(v); localStorage.setItem("bankroll", String(v)); }
                 setEditingBankroll(false);
               }} className="flex gap-1">
@@ -390,7 +390,7 @@ export default function Home() {
             ) : (
               <button onClick={() => { setBankrollInput(String(bankroll)); setEditingBankroll(true); }}
                 className="text-sm text-gray-400 hover:text-white">
-                Bankroll: <span className="text-green-400 font-bold">${bankroll}</span>
+                Bankroll: <span className="text-green-400 font-bold">${bankroll.toFixed(2)}</span>
               </button>
             )}
           </div>
