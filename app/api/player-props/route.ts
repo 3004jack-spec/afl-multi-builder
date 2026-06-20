@@ -49,7 +49,8 @@ interface PricedLine {
   bayesianRate: number;  // (10×L10 + 15×allTime) / 25 — blended reliability estimate
   bookmakerImplied: number;
   edge: number;          // allTime edge
-  bayesianEdge: number;  // bayesianRate − implied — used to pick the optimal line
+  bayesianEdge: number;  // bayesianRate − implied — informational only, no longer drives line selection
+  kelly: number;         // Kelly fraction on shrunk bayesianRate — used to pick the optimal line
 }
 
 interface PlayerProp {
@@ -73,7 +74,8 @@ interface PlayerProp {
   bookmakerImplied: number;
   edge: number;          // all-time weighted edge
   recentEdge: number;    // L10 hit rate minus bookmaker implied
-  bayesianEdge: number;  // bayesianRate − implied — used to rank and filter
+  bayesianEdge: number;  // bayesianRate − implied — informational only
+  kelly: number;         // Kelly fraction on shrunk bayesianRate — used to rank and filter
   seasonAvg: number;
   recentForm: number[];
   thresholds: ThresholdPoint[];
@@ -372,6 +374,10 @@ export async function GET() {
       const implied = Math.round((1 / bestOdds) * 1000) / 10;
       const edge = Math.round((hr - implied) * 10) / 10;
       const bayesianEdge = Math.round((bayesianRate - implied) * 10) / 10;
+      // Calibration-shrunk rate (validated: model is ~6% overconfident, see SESSION_NOTES.md)
+      // feeds Kelly so line selection optimizes the actual bet, not just the raw probability gap.
+      const shrunkRate = (bayesianRate / 100) * 0.94;
+      const kelly = bestOdds > 1 ? Math.round(((shrunkRate * bestOdds - 1) / (bestOdds - 1)) * 1000) / 1000 : -Infinity;
       pricedLines.push({
         line,
         bookmakerOdds: bookieOdds,
@@ -383,6 +389,7 @@ export async function GET() {
         bookmakerImplied: implied,
         edge,
         bayesianEdge,
+        kelly,
       });
     }
 
@@ -392,10 +399,12 @@ export async function GET() {
     const seasonAvgForFilter = Math.round((statValues.reduce((a, b) => a + b, 0) / n) * 100) / 100;
 
     // Only consider lines where player's season avg meets the threshold (avoids regression-bait streaks)
-    // Then pick the line with the best Bayesian edge among those eligible lines
+    // Then pick the line with the best Kelly fraction among those eligible lines — Kelly accounts for
+    // the odds payout curve, so it can favor a safer/shorter line over a bigger raw-edge/longer line
+    // (e.g. 90% at $1.23 can out-Kelly 79% at $1.56 even though the latter has the bigger edge).
     const eligibleLines = pricedLines.filter(pl => seasonAvgForFilter >= Math.ceil(pl.line));
     if (eligibleLines.length === 0) continue;
-    eligibleLines.sort((a, b) => b.bayesianEdge - a.bayesianEdge);
+    eligibleLines.sort((a, b) => b.kelly - a.kelly);
     const best = eligibleLines[0];
 
     // Detect if best line differs from the main (non-alternate) line
@@ -438,6 +447,7 @@ export async function GET() {
       edge: best.edge,
       recentEdge,
       bayesianEdge: best.bayesianEdge,
+      kelly: best.kelly,
       seasonAvg,
       recentForm,
       thresholds,

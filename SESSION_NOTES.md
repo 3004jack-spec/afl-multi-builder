@@ -174,8 +174,10 @@ Promo:   combined odds ≥ promoMinOdds
 }
 ```
 
-### Line selection logic (fixed 2026-06-19)
-Filter lines to `seasonAvg >= ceil(line)` FIRST, then sort eligible lines by `bayesianEdge` descending, take index 0. This ensures the chosen line is always one the player's historical average can support.
+### Line selection logic (fixed 2026-06-19, updated 2026-06-20)
+Filter lines to `seasonAvg >= ceil(line)` FIRST, then sort eligible lines by **Kelly fraction** descending, take index 0. This ensures the chosen line is always one the player's historical average can support.
+
+**2026-06-20 change:** line selection used to sort by raw `bayesianEdge` (bayesianRate − implied), not Kelly. Edge and Kelly can disagree — a smaller probability gap at much shorter odds can be the better risk-adjusted bet than a bigger gap at longer odds (e.g. 90% at $1.23 vs 79% at $1.56). Switched to ranking by Kelly, computed on the **shrunk** rate (`bayesianRate × 0.94`, the documented overconfidence correction) so line selection and EV are judged on the same calibrated basis. `bayesianEdge` is kept on `PricedLine`/`PlayerProp` for display only, no longer drives selection.
 
 ### Odds API
 - Key: `0f0d4c20983592fffeaa6e1b11206ebd`
