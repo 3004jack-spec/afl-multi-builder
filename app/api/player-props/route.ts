@@ -250,11 +250,34 @@ export async function GET() {
     }
   }
 
-  // Build a matchup → commenceTime lookup from events for Sportsbet cross-referencing
+  // Build lookup from events: canonical matchup name → commenceTime
+  // Also build a word-based lookup so Sportsbet names (e.g. "GWS GIANTS v Hawthorn") can resolve
+  // to the canonical Odds API name (e.g. "Greater Western Sydney Giants v Hawthorn Hawks")
+  const canonicalEvents: Array<{ canonical: string; commenceTime: string; words: [Set<string>, Set<string>] }> = [];
   const matchupTimeMap = new Map<string, string>();
+
   for (const event of events as Array<{ id: string; home_team: string; away_team: string; commence_time: string }>) {
-    matchupTimeMap.set(`${event.home_team} v ${event.away_team}`, event.commence_time);
+    const canonical = `${event.home_team} v ${event.away_team}`;
+    matchupTimeMap.set(canonical, event.commence_time);
     matchupTimeMap.set(`${event.away_team} v ${event.home_team}`, event.commence_time);
+    const homeWords = new Set(event.home_team.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const awayWords = new Set(event.away_team.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    canonicalEvents.push({ canonical, commenceTime: event.commence_time, words: [homeWords, awayWords] });
+  }
+
+  function resolveCanonicalMatchup(sbMatchup: string): { canonical: string; commenceTime: string } {
+    // Exact match first
+    if (matchupTimeMap.has(sbMatchup)) return { canonical: sbMatchup, commenceTime: matchupTimeMap.get(sbMatchup)! };
+    const parts = sbMatchup.toLowerCase().split(" v ");
+    if (parts.length !== 2) return { canonical: sbMatchup, commenceTime: "" };
+    const sbHomeWords = new Set(parts[0].split(/\s+/).filter(w => w.length > 2));
+    const sbAwayWords = new Set(parts[1].split(/\s+/).filter(w => w.length > 2));
+    for (const ev of canonicalEvents) {
+      const homeMatch = [...sbHomeWords].some(w => ev.words[0].has(w)) || [...ev.words[0]].some(w => sbHomeWords.has(w));
+      const awayMatch = [...sbAwayWords].some(w => ev.words[1].has(w)) || [...ev.words[1]].some(w => sbAwayWords.has(w));
+      if (homeMatch && awayMatch) return { canonical: ev.canonical, commenceTime: ev.commenceTime };
+    }
+    return { canonical: sbMatchup, commenceTime: "" };
   }
 
   await Promise.all(
@@ -279,17 +302,11 @@ export async function GET() {
     })
   );
 
-  // Ingest real Sportsbet prices — covers kicks/handballs/clearances not in The Odds API
+  // Ingest Sportsbet prices — resolve to canonical Odds API matchup name so frontend exact-match works
   const sbOdds = loadSportsbetOdds();
   if (sbOdds) {
     for (const match of sbOdds.matches) {
-      // Try to find commenceTime by matching the matchup string (fuzzy — Sportsbet names differ slightly)
-      let commenceTime = matchupTimeMap.get(match.matchup) ?? "";
-      if (!commenceTime) {
-        // Try reversed team order
-        const parts = match.matchup.split(" v ");
-        if (parts.length === 2) commenceTime = matchupTimeMap.get(`${parts[1]} v ${parts[0]}`) ?? "";
-      }
+      const { canonical, commenceTime } = resolveCanonicalMatchup(match.matchup);
 
       for (const [playerName, statMap] of Object.entries(match.markets)) {
         for (const [statKey, thresholds] of Object.entries(statMap)) {
@@ -297,7 +314,7 @@ export async function GET() {
           const mapKey = `${playerName}::${stat}`;
           let entry = playerLineMap.get(mapKey);
           if (!entry) {
-            entry = { matchup: match.matchup, commenceTime, statType: stat, statLabel: stat, lines: new Map() };
+            entry = { matchup: canonical, commenceTime, statType: stat, statLabel: stat, lines: new Map() };
             playerLineMap.set(mapKey, entry);
           }
           for (const [threshStr, price] of Object.entries(thresholds)) {
@@ -371,12 +388,15 @@ export async function GET() {
 
     if (pricedLines.length === 0) continue;
 
-    // Pick the line with the best Bayesian edge — balances L10 reliability with all-time hit rate
-    // Pure edge alone would favour high-line/high-odds bets that are less reliable in a multi context
-    pricedLines.sort((a, b) => b.bayesianEdge - a.bayesianEdge);
-    const best = pricedLines[0];
+    // Compute season average here so we can filter lines before picking best
+    const seasonAvgForFilter = Math.round((statValues.reduce((a, b) => a + b, 0) / n) * 100) / 100;
 
-    if (best.bayesianEdge <= 0) continue; // Bayesian edge must be positive — raw edge alone isn't enough
+    // Only consider lines where player's season avg meets the threshold (avoids regression-bait streaks)
+    // Then pick the line with the best Bayesian edge among those eligible lines
+    const eligibleLines = pricedLines.filter(pl => seasonAvgForFilter >= Math.ceil(pl.line));
+    if (eligibleLines.length === 0) continue;
+    eligibleLines.sort((a, b) => b.bayesianEdge - a.bayesianEdge);
+    const best = eligibleLines[0];
 
     // Detect if best line differs from the main (non-alternate) line
     // Main line = the one closest to median of all lines
@@ -394,12 +414,7 @@ export async function GET() {
     const recentEdge = Math.round((hitRate10 - best.bookmakerImplied) * 10) / 10;
     const thresholds = buildThresholds(statValues);
 
-    // Require positive recent edge — all-time edge alone isn't enough
-    if (recentEdge <= 0) continue;
-
-    // Require season average >= threshold — filters out players hitting the line on a streak
-    // but whose underlying average sits below it (regression bait, not genuine edge)
-    if (seasonAvg < threshold) continue;
+    // seasonAvg >= threshold already enforced during line selection above
 
     props.push({
       playerName,

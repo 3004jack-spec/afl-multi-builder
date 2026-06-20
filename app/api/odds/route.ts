@@ -77,12 +77,26 @@ export async function GET() {
 
   for (const sport of SPORTS) {
     try {
-      const res = await fetch(
+      // Try h2h odds first; if quota depleted fall back to events-only (no bookie odds)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let games: Array<{ id: string; home_team: string; away_team: string; commence_time: string; bookmakers?: any[] }> = [];
+      const oddsRes = await fetch(
         `${ODDS_BASE}/sports/${sport.key}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=h2h&oddsFormat=decimal`,
-        { next: { revalidate: 1800 } }
+        { next: { revalidate: 300 } }
       );
-      const games = await res.json();
-      if (!Array.isArray(games)) continue;
+      const oddsData = await oddsRes.json();
+      if (Array.isArray(oddsData)) {
+        games = oddsData;
+      } else {
+        // Quota depleted — fall back to events endpoint (times + team names, no bookie odds)
+        const eventsRes = await fetch(
+          `${ODDS_BASE}/sports/${sport.key}/events/?apiKey=${ODDS_API_KEY}`,
+          { next: { revalidate: 300 } }
+        );
+        const eventsData = await eventsRes.json();
+        if (Array.isArray(eventsData)) games = eventsData.map((e: { id: string; home_team: string; away_team: string; commence_time: string }) => ({ ...e, bookmakers: [] }));
+      }
+      if (games.length === 0) continue;
 
       for (const game of games) {
         const homeTeam: string = game.home_team;
@@ -104,7 +118,17 @@ export async function GET() {
           });
         }
 
-        if (bookmakers.length === 0) continue;
+        // No bookmakers in fallback mode — still include the game for scheduling purposes
+        if (bookmakers.length === 0) {
+          allGames.push({
+            id: game.id, sport: sport.label, homeTeam, awayTeam,
+            commenceTime: game.commence_time, bookmakers: [],
+            bestHome: { bookie: "", odds: 0 }, bestAway: { bookie: "", odds: 0 },
+            favourite: "", favouriteOdds: 0, favouriteBookie: "", impliedWinPct: 0,
+            squiggleConfidence: undefined, squiggleTip: undefined, confidenceSource: "odds",
+          });
+          continue;
+        }
 
         const bestHome = bookmakers.reduce((best, b) =>
           b.homeOdds > best.homeOdds ? b : best

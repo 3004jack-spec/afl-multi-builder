@@ -93,12 +93,15 @@ function parseLineups(html: string): LineupData {
 export async function GET(request: Request) {
   const debug = new URL(request.url).searchParams.has("debug");
 
-  // Manual override takes priority — used when confirmed lineups are known before footywire updates
+  // Manual override takes priority — only used if it has actual player data
   const overridePath = join(process.cwd(), "data", "lineups-override.json");
   if (!debug && existsSync(overridePath)) {
     try {
       const data = JSON.parse(readFileSync(overridePath, "utf8"));
-      return NextResponse.json(data);
+      if (Array.isArray(data.named) && data.named.length > 0) {
+        return NextResponse.json(data);
+      }
+      // Empty override — fall through to Footywire
     } catch { /* fall through to scrape */ }
   }
 

@@ -4,21 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
-interface HistoricalPick {
-  playerName: string;
-  statType: string;
-  suggestedThreshold: number;
-  bayesianRate: number;
-  hitRate10: number;
-  hitRate5: number;
-  allTimeRate: number;
-  seasonAvg: number;
-  recentForm: number[];
-  gamesAnalysed: number;
-  suggestedLine: string;
-  matchup?: string;
-}
-
 interface PlayerProp {
   playerName: string;
   matchup: string;
@@ -84,7 +69,15 @@ interface GameLeg {
   odds: number;
   bookie: string;
   matchup: string;
-  hasLiveOdds: boolean;
+}
+
+interface ComboOption {
+  legs: GameLeg[];
+  tag: string;
+  sr: number;
+  odds: number;
+  kelly: number;
+  ev: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -129,39 +122,92 @@ function legsEV(legs: GameLeg[], boostPct = 0, isBonusBet = false) {
   return Math.round((isBonusBet ? sr * (odds - 1) * 100 - 100 : sr * odds * 100 - 100) * 10) / 10;
 }
 
-// Find best combo: if promoMinOdds set, find fewest legs that hit it (maximising strike rate)
-// Otherwise: Kelly-optimal across 2–5 legs
-function bestCombo(legs: GameLeg[], promoMinOdds: number, boostPct: number): GameLeg[] {
-  const pool = legs.slice(0, 18);
-  if (pool.length < 2) return pool;
+function bestCombos(legs: GameLeg[], promoMinOdds: number, boostPct: number, isBonusBet: boolean): ComboOption[] {
+  const pool = legs.slice(0, 15);
+  if (pool.length === 0) return [];
 
+  const make = (combo: GameLeg[], tag: string): ComboOption => ({
+    legs: combo, tag,
+    sr: legsSR(combo),
+    odds: legsOdds(combo, boostPct),
+    kelly: legsKelly(combo, boostPct),
+    ev: legsEV(combo, boostPct, isBonusBet),
+  });
+
+  const options: ComboOption[] = [];
+
+  // Best single leg — only show if Kelly is positive (genuine edge, not just high confidence)
+  if (pool[0]?.bayesianRate >= 85 && legsKelly([pool[0]], boostPct) > 0) {
+    options.push(make([pool[0]], "Top single"));
+  }
+
+  // Best 2-leg (highest Kelly, positive)
+  if (pool.length >= 2) {
+    let best: GameLeg[] = [], bestK = -Infinity;
+    for (const c of getCombinations(pool.slice(0, 12), 2)) {
+      const k = legsKelly(c, boostPct);
+      if (k > bestK) { bestK = k; best = c; }
+    }
+    if (bestK > 0) options.push(make(best, "Best 2-leg"));
+  }
+
+  // Best 3-leg (highest Kelly, SR must be ≥ 65%)
+  if (pool.length >= 3) {
+    let best: GameLeg[] = [], bestK = -Infinity;
+    for (const c of getCombinations(pool.slice(0, 10), 3)) {
+      const k = legsKelly(c, boostPct);
+      if (k > bestK && legsSR(c) >= 65) { bestK = k; best = c; }
+    }
+    if (bestK > 0) options.push(make(best, "Best 3-leg"));
+  }
+
+  // Best 4-leg (highest Kelly, SR must be ≥ 55%)
+  if (pool.length >= 4) {
+    let best: GameLeg[] = [], bestK = -Infinity;
+    for (const c of getCombinations(pool.slice(0, 8), 4)) {
+      const k = legsKelly(c, boostPct);
+      if (k > bestK && legsSR(c) >= 55) { bestK = k; best = c; }
+    }
+    if (bestK > 0) options.push(make(best, "Best 4-leg"));
+  }
+
+  // Long shot 5-7 leg: SR ≥ 50%, odds ≥ $3.00, Kelly must be positive
+  // Only surfaces when the model genuinely finds edge — not forced
+  if (pool.length >= 5) {
+    let bestLong: GameLeg[] = [], bestLongK = -Infinity;
+    for (let n = 5; n <= Math.min(7, pool.length); n++) {
+      for (const c of getCombinations(pool.slice(0, 10), n)) {
+        const k = legsKelly(c, boostPct);
+        if (k > bestLongK && legsOdds(c, boostPct) >= 3.0) {
+          bestLongK = k; bestLong = c;
+        }
+      }
+    }
+    if (bestLongK > 0) options.push(make(bestLong, `Long shot ${bestLong.length}-leg`));
+  }
+
+  // Promo option: fewest legs to hit target odds, highest SR
   if (promoMinOdds > 0) {
     for (let n = 2; n <= Math.min(5, pool.length); n++) {
-      const combos = getCombinations(pool.slice(0, Math.min(pool.length, n + 6)), n);
-      const q = combos.filter(c => legsOdds(c, boostPct) >= promoMinOdds);
-      if (q.length) return q.sort((a, b) => legsSR(b) - legsSR(a))[0];
+      const src = pool.slice(0, Math.min(pool.length, n + 6));
+      const hits = getCombinations(src, n).filter(c => legsOdds(c, boostPct) >= promoMinOdds);
+      if (hits.length) {
+        const best = hits.sort((a, b) => legsSR(b) - legsSR(a))[0];
+        // Only add if not already covered
+        const alreadyShown = options.some(o => o.legs.length === n && legsOdds(o.legs, boostPct) >= promoMinOdds);
+        if (!alreadyShown) options.push(make(best, `Promo ${n}-leg (≥$${promoMinOdds})`));
+        break;
+      }
     }
-    // Can't hit target — return highest-odds 2-leg combo closest to target
-    return getCombinations(pool.slice(0, 8), 2)
-      .sort((a, b) => legsOdds(b, boostPct) - legsOdds(a, boostPct))[0] ?? pool.slice(0, 2);
   }
 
-  // No promo: Kelly-optimal
-  let bestK = -Infinity, bestLegs = pool.slice(0, 3);
-  for (let n = 2; n <= Math.min(5, pool.length); n++) {
-    const src = pool.slice(0, n <= 3 ? 14 : 10);
-    for (const combo of getCombinations(src, n)) {
-      const k = legsKelly(combo, boostPct);
-      if (k > bestK) { bestK = k; bestLegs = combo; }
-    }
-  }
-  return bestLegs;
+  return options;
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [tab, setTab] = useState<"tonight" | "multi" | "stats">("tonight");
+  const [tab, setTab] = useState<"today" | "multi" | "stats">("today");
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
   const [gameLegsExpanded, setGameLegsExpanded] = useState(false);
   const [selectedLegs, setSelectedLegs] = useState<GameLeg[]>([]);
@@ -171,7 +217,7 @@ export default function Home() {
   const [promoBoostPct, setPromoBoostPct] = useState(0);
   const [isBonusBet, setIsBonusBet] = useState(false);
 
-  // My Multi legs (cross-game manual)
+  // My Multi legs
   const [myLegs, setMyLegs] = useState<GameLeg[]>([]);
   const [myOddsBoostPct, setMyOddsBoostPct] = useState(0);
   const [myIsBonusBet, setMyIsBonusBet] = useState(false);
@@ -192,82 +238,51 @@ export default function Home() {
 
   // Data
   const [games, setGames] = useState<OddsGame[]>([]);
-  const [picks, setPicks] = useState<HistoricalPick[]>([]);
   const [props, setProps] = useState<PlayerProp[]>([]);
   const [bands, setBands] = useState<BandResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
-  const [lineupsLoaded, setLineupsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       fetch("/api/odds").then(r => r.json()).then(d => setGames(d.games ?? [])),
-      fetch(`/api/player-picks?minBayesian=${minBayesian}`).then(r => r.json()).then(d => setPicks(d.picks ?? [])),
       fetch("/api/player-props").then(r => r.json()).then(d => setProps(d.props ?? [])),
       fetch("/api/backtest").then(r => r.json()).then(d => { setBands(d.bandResults ?? []); setSummary(d.summary); }),
-      fetch("/api/lineups").then(r => r.json()).then(d => {
-        setNamedPlayers(new Set(d.named ?? []));
-        setLineupsLoaded(true);
-      }).catch(() => setLineupsLoaded(true)),
+      fetch("/api/lineups").then(r => r.json()).then(d => setNamedPlayers(new Set(d.named ?? []))).catch(() => {}),
     ]).finally(() => setLoading(false));
-  }, [minBayesian]);
+  }, []);
 
-  function lineupOk(name: string, gameNames?: string[]) {
-    if (!lineupsLoaded || namedPlayers.size === 0) return true;
-    // Only apply lineup filter if at least one player from this game is in the lineup data.
-    // Prevents stale lineups from a different game blocking all legs.
-    if (gameNames && !gameNames.some(n => namedPlayers.has(n))) return true;
-    return namedPlayers.has(name);
-  }
-
-  // Unique game matchups from picks, enriched with odds-API timing
+  // Game list — source of truth is the Odds API (correct team names + times)
   const gameList = useMemo(() => {
-    const matchups = [...new Set(picks.map(p => p.matchup).filter(Boolean))] as string[];
-    return matchups.map(matchup => {
-      const parts = matchup.toLowerCase().split(" v ");
-      const game = games.find(g => {
-        const s = `${g.homeTeam} ${g.awayTeam}`.toLowerCase();
-        return parts.length === 2 && (s.includes(parts[0].split(" ")[0]) || s.includes(parts[1].split(" ")[0]));
-      });
-      return { matchup, commenceTime: game?.commenceTime ?? "", game };
-    }).sort((a, b) => {
-      if (!a.commenceTime) return 1;
-      if (!b.commenceTime) return -1;
-      return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
-    }).filter(g => {
-      // Show games happening within the next 48 hours, or if no time known show all
-      if (!g.commenceTime) return true;
-      const diff = new Date(g.commenceTime).getTime() - Date.now();
-      return diff > -3 * 60 * 60 * 1000 && diff < 48 * 60 * 60 * 1000; // started <3h ago or upcoming 48h
-    });
-  }, [picks, games]);
+    const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
+    const endOfTomorrow = new Date();
+    endOfTomorrow.setDate(endOfTomorrow.getDate() + 2);
+    endOfTomorrow.setHours(0, 0, 0, 0);
 
-  // Build legs for a given game.
-  // Primary source: player-props (threshold + odds + Bayesian already correctly joined by API).
-  // Supplement: player-picks for players not in props (uses estimated odds = 1/bayesianRate).
-  // This ensures the threshold shown always matches the odds shown.
+    return games
+      .filter(g => {
+        const t = new Date(g.commenceTime).getTime();
+        return t > threeHoursAgo && t < endOfTomorrow.getTime();
+      })
+      .sort((a, b) => new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime())
+      .map(g => ({
+        matchup: `${g.homeTeam} v ${g.awayTeam}`,
+        commenceTime: g.commenceTime,
+        game: g,
+      }));
+  }, [games]);
+
+  // Build legs for a game — exact matchup match against player-props (same format, no fuzzy)
   function legsForGame(matchup: string): GameLeg[] {
-    const seen = new Set<string>();
-    const legs: GameLeg[] = [];
-    const gamePlayerNames = picks.filter(p => p.matchup === matchup).map(p => p.playerName);
-
-    // 1. Props legs — threshold and odds are correctly matched by the API
-    for (const p of props) {
-      // Fuzzy matchup match: props use Odds API team names, picks use AFL Tables names
-      const propParts = p.matchup.toLowerCase().split(" v ");
-      const gameParts = matchup.toLowerCase().split(" v ");
-      const matchesGame = propParts.length === 2 && gameParts.length === 2 && (
-        (gameParts[0].includes(propParts[0].split(" ")[0]) || propParts[0].includes(gameParts[0].split(" ")[0])) &&
-        (gameParts[1].includes(propParts[1].split(" ")[0]) || propParts[1].includes(gameParts[1].split(" ")[0]))
-      );
-      if (!matchesGame) continue;
-      if (!lineupOk(p.playerName, gamePlayerNames)) continue;
-      if (p.bayesianEdge <= 0 || p.coldForm) continue;
-
-      const key = `${p.playerName}::${p.statType}`;
-      seen.add(key);
-      legs.push({
+    const gamePlayers = props.filter(p => p.matchup === matchup).map(p => p.playerName);
+    // Only apply lineup filter if Footywire data includes at least one player from THIS game.
+    // Prevents weekend selections from blocking a Friday night game where no lineup data exists yet.
+    const lineupApplies = namedPlayers.size > 0 && gamePlayers.some(n => namedPlayers.has(n));
+    return props
+      .filter(p => p.matchup === matchup && !p.coldForm && p.bayesianRate >= minBayesian)
+      .filter(p => !lineupApplies || namedPlayers.has(p.playerName))
+      .map(p => ({
         playerName: p.playerName,
         statType: p.statType,
         suggestedLine: `${Math.ceil(p.marketLine)}+ ${p.statType}`,
@@ -280,49 +295,18 @@ export default function Home() {
         odds: p.bestOdds,
         bookie: p.bestBookie,
         matchup,
-        hasLiveOdds: true,
-      });
-    }
-
-    // 2. Supplement with picks for players not covered by props (estimated odds)
-    for (const p of picks) {
-      if (p.matchup !== matchup) continue;
-      if (!lineupOk(p.playerName, gamePlayerNames)) continue;
-      const key = `${p.playerName}::${p.statType}`;
-      if (seen.has(key)) continue; // already covered by live props
-      const estOdds = Math.round((100 / p.bayesianRate) * 100) / 100;
-      if (estOdds < 1.04) continue;
-      legs.push({
-        playerName: p.playerName,
-        statType: p.statType,
-        suggestedLine: p.suggestedLine,
-        threshold: p.suggestedThreshold,
-        bayesianRate: p.bayesianRate,
-        hitRate10: p.hitRate10,
-        hitRate5: p.hitRate5,
-        seasonAvg: p.seasonAvg,
-        recentForm: p.recentForm,
-        odds: estOdds,
-        bookie: "est.",
-        matchup,
-        hasLiveOdds: false,
-      });
-    }
-
-    return legs
-      .filter(l => l.bayesianRate >= minBayesian)
-      .sort((a, b) => {
-        // Live-priced legs first, then by bayesian rate
-        if (a.hasLiveOdds !== b.hasLiveOdds) return a.hasLiveOdds ? -1 : 1;
-        return b.bayesianRate - a.bayesianRate;
-      });
+      }))
+      .sort((a, b) => b.bayesianRate - a.bayesianRate);
   }
 
   function openGame(matchup: string) {
-    const legs = legsForGame(matchup);
     setSelectedGame(matchup);
     setGameLegsExpanded(false);
-    setSelectedLegs(bestCombo(legs, promoMinOdds, promoBoostPct));
+    setSelectedLegs([]);
+  }
+
+  function selectCombo(legs: GameLeg[]) {
+    setSelectedLegs(legs);
   }
 
   function toggleLeg(leg: GameLeg) {
@@ -340,9 +324,7 @@ export default function Home() {
 
   // My Multi helpers
   const inMyMulti = (l: GameLeg) => myLegs.some(m => m.playerName === l.playerName && m.statType === l.statType);
-  function addToMyMulti(leg: GameLeg) {
-    if (!inMyMulti(leg)) setMyLegs(prev => [...prev, leg]);
-  }
+  function addToMyMulti(leg: GameLeg) { if (!inMyMulti(leg)) setMyLegs(prev => [...prev, leg]); }
   function removeFromMyMulti(leg: GameLeg) {
     setMyLegs(prev => prev.filter(l => !(l.playerName === leg.playerName && l.statType === leg.statType)));
   }
@@ -350,12 +332,12 @@ export default function Home() {
   // My Multi stats
   const myRawOdds = myLegs.reduce((a, l) => a * l.odds, 1);
   const myOdds = Math.round(myRawOdds * (1 + myOddsBoostPct / 100) * 100) / 100;
-  const mySR = myLegs.length ? Math.round(myLegs.reduce((a, l) => a * (l.bayesianRate / 100), 1) * 1000) / 10 : 0;
-  const myKelly = myOdds > 1 && mySR > 0 ? Math.max(0, Math.round(((mySR / 100 * myOdds - 1) / (myOdds - 1)) * 1000) / 10) : 0;
-  const myEV = myLegs.length ? Math.round((myIsBonusBet ? mySR / 100 * (myOdds - 1) * 100 - 100 : mySR / 100 * myOdds * 100 - 100) * 10) / 10 : 0;
+  const mySR = myLegs.length ? legsSR(myLegs) : 0;
+  const myKelly = myOdds > 1 && mySR > 0 ? legsKelly(myLegs, myOddsBoostPct) : 0;
+  const myEV = myLegs.length ? legsEV(myLegs, myOddsBoostPct, myIsBonusBet) : 0;
   const myCorrelated = myLegs.map(l => l.playerName).filter((p, i, a) => a.indexOf(p) !== i);
 
-  // Game detail stats
+  // Selected legs stats
   const selOdds = selectedLegs.length ? legsOdds(selectedLegs, promoBoostPct) : 0;
   const selSR = selectedLegs.length ? legsSR(selectedLegs) : 0;
   const selKelly = legsKelly(selectedLegs, promoBoostPct);
@@ -373,16 +355,12 @@ export default function Home() {
       <div className="sticky top-0 z-50 bg-black border-b border-gray-800">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="font-bold text-lg">AFL Multi Builder</span>
-          {/* Bankroll */}
           <div className="flex items-center gap-2">
             {editingBankroll ? (
               <form onSubmit={e => {
                 e.preventDefault();
                 const v = parseInt(bankrollInput);
-                if (!isNaN(v) && v > 0) {
-                  setBankroll(v);
-                  localStorage.setItem("bankroll", String(v));
-                }
+                if (!isNaN(v) && v > 0) { setBankroll(v); localStorage.setItem("bankroll", String(v)); }
                 setEditingBankroll(false);
               }} className="flex gap-1">
                 <input autoFocus value={bankrollInput} onChange={e => setBankrollInput(e.target.value)}
@@ -397,12 +375,11 @@ export default function Home() {
             )}
           </div>
         </div>
-        {/* Tab bar */}
         <div className="flex border-t border-gray-800">
-          {(["tonight", "multi", "stats"] as const).map(t => (
+          {(["today", "multi", "stats"] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setSelectedGame(null); }}
-              className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${tab === t ? "text-green-400 border-b-2 border-green-400" : "text-gray-500 hover:text-white"}`}>
-              {t === "tonight" ? "Tonight" : t === "multi" ? `My Multi${myLegs.length ? ` (${myLegs.length})` : ""}` : "Stats"}
+              className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === t ? "text-green-400 border-b-2 border-green-400" : "text-gray-500 hover:text-white"}`}>
+              {t === "today" ? "Today / Tomorrow" : t === "multi" ? `My Multi${myLegs.length ? ` (${myLegs.length})` : ""}` : "Stats"}
             </button>
           ))}
         </div>
@@ -410,18 +387,19 @@ export default function Home() {
 
       <div className="max-w-lg mx-auto px-4 pb-16 pt-4">
 
-        {/* ── TONIGHT ── */}
-        {tab === "tonight" && (
+        {/* ── TODAY / TOMORROW ── */}
+        {tab === "today" && (
           <div className="space-y-4">
             {loading ? (
-              <div className="text-center py-16 text-gray-500">Loading games…</div>
+              <div className="text-center py-16 text-gray-500">Loading…</div>
             ) : selectedGame ? (
               // ── Game Detail ──
               (() => {
                 const gInfo = gameList.find(g => g.matchup === selectedGame);
                 const allLegs = legsForGame(selectedGame);
+                const combos = bestCombos(allLegs, promoMinOdds, promoBoostPct, isBonusBet);
                 const promoHit = promoMinOdds > 0 && selOdds >= promoMinOdds;
-                const promoMiss = promoMinOdds > 0 && selOdds < promoMinOdds;
+                const promoMiss = promoMinOdds > 0 && selectedLegs.length > 0 && selOdds < promoMinOdds;
 
                 return (
                   <div className="space-y-4">
@@ -430,34 +408,38 @@ export default function Home() {
                       <button onClick={() => setSelectedGame(null)} className="text-gray-500 text-sm hover:text-white mb-2">← All games</button>
                       <h2 className="text-xl font-bold">{selectedGame}</h2>
                       {gInfo?.commenceTime && <p className="text-gray-400 text-sm">{formatTime(gInfo.commenceTime)}</p>}
-                      {gInfo?.game && (
+                      {gInfo?.game?.squiggleTip && (
                         <p className="text-xs text-gray-500 mt-1">
-                          {gInfo.game.squiggleTip ?? gInfo.game.homeTeam} favoured
-                          {gInfo.game.squiggleConfidence ? ` · ${gInfo.game.squiggleConfidence}% model confidence` : ""}
+                          {gInfo.game.squiggleTip} favoured{gInfo.game.squiggleConfidence ? ` · ${gInfo.game.squiggleConfidence}% confidence` : ""}
                         </p>
                       )}
+                    </div>
+
+                    {/* Confidence filter */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Min confidence:</span>
+                      {[70, 75, 80, 85].map(v => (
+                        <button key={v} onClick={() => setMinBayesian(v)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${minBayesian === v ? "bg-green-500 text-black" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
+                          {v}%
+                        </button>
+                      ))}
                     </div>
 
                     {/* Promo bar */}
                     <div className="bg-gray-900 rounded-xl p-4 space-y-3">
                       <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Promotions</p>
-
                       <div>
                         <p className="text-xs text-gray-500 mb-2">Money-back / bonus if combined odds ≥</p>
                         <div className="flex gap-2 flex-wrap">
                           {promoOptions.map(v => (
-                            <button key={v} onClick={() => {
-                              setPromoMinOdds(v);
-                              const legs = legsForGame(selectedGame);
-                              setSelectedLegs(bestCombo(legs, v, promoBoostPct));
-                            }}
+                            <button key={v} onClick={() => setPromoMinOdds(v)}
                               className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${promoMinOdds === v ? "bg-green-500 text-black" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
                               {v === 0 ? "None" : `$${v}`}
                             </button>
                           ))}
                         </div>
                       </div>
-
                       <div>
                         <p className="text-xs text-gray-500 mb-2">Odds boost</p>
                         <div className="flex gap-2 flex-wrap">
@@ -469,8 +451,7 @@ export default function Home() {
                           ))}
                         </div>
                       </div>
-
-                      <label className="flex items-center gap-3 cursor-pointer">
+                      <label className="flex items-center gap-3 cursor-pointer" onClick={() => setIsBonusBet(v => !v)}>
                         <div className={`w-10 h-5 rounded-full transition-colors ${isBonusBet ? "bg-purple-500" : "bg-gray-700"} relative`}>
                           <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${isBonusBet ? "translate-x-5" : "translate-x-0.5"}`} />
                         </div>
@@ -478,25 +459,61 @@ export default function Home() {
                       </label>
                     </div>
 
+                    {/* Recommended combos */}
+                    {allLegs.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <p>No legs available at {minBayesian}% confidence.</p>
+                        <p className="text-sm mt-1">Try lowering the min confidence filter.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Recommended bets</p>
+                        {combos.map((opt, i) => (
+                          <button key={i} onClick={() => selectCombo(opt.legs)}
+                            className={`w-full text-left rounded-xl p-4 border transition-all ${
+                              selectedLegs.length === opt.legs.length && opt.legs.every(l => isSelected(l))
+                                ? "bg-green-950 border-green-600"
+                                : "bg-gray-900 border-gray-800 hover:border-gray-600"
+                            }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">{opt.tag}</span>
+                              <div className="flex gap-3 text-xs">
+                                <span className="text-green-400 font-bold">${opt.odds.toFixed(2)}</span>
+                                <span className={opt.sr >= 70 ? "text-green-400" : opt.sr >= 55 ? "text-yellow-400" : "text-orange-400"}>{opt.sr}% SR</span>
+                                <span className={opt.ev > 0 ? "text-green-400" : "text-gray-500"}>{opt.ev > 0 ? "+" : ""}{opt.ev}% EV</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              {opt.legs.map(leg => (
+                                <div key={`${leg.playerName}::${leg.statType}`} className="flex justify-between text-sm">
+                                  <span className="text-white">{leg.playerName} · <span className="text-gray-400">{leg.suggestedLine}</span></span>
+                                  <span className="text-green-400 font-semibold">${leg.odds.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-2 text-xs text-gray-500">
+                              Kelly stake: <span className="text-blue-400 font-bold">${Math.round(bankroll * opt.kelly / 100)}</span>
+                              {opt.kelly > 0 && <span className="ml-2">({opt.kelly}% of bankroll)</span>}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Selected legs summary */}
                     {selectedLegs.length > 0 && (
-                      <div className={`rounded-xl p-4 space-y-3 ${promoHit ? "bg-green-950 border border-green-700" : promoMiss ? "bg-red-950 border border-red-800" : "bg-gray-900"}`}>
+                      <div className={`rounded-xl p-4 space-y-3 ${promoHit ? "bg-green-950 border border-green-700" : promoMiss ? "bg-red-950 border border-red-800" : "bg-gray-900 border border-gray-700"}`}>
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                            Your Multi ({selectedLegs.length} leg{selectedLegs.length !== 1 ? "s" : ""})
+                            Selected ({selectedLegs.length} leg{selectedLegs.length !== 1 ? "s" : ""})
                           </p>
                           {promoHit && <span className="text-xs bg-green-500 text-black px-2 py-0.5 rounded-full font-bold">✓ Promo qualifies</span>}
-                          {promoMiss && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">⚠ Below ${promoMinOdds} target</span>}
+                          {promoMiss && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">⚠ Below ${promoMinOdds}</span>}
                         </div>
-
-                        {/* Legs list */}
-                        <div className="space-y-1.5">
+                        <div className="space-y-1">
                           {selectedLegs.map(leg => (
                             <div key={`${leg.playerName}::${leg.statType}`} className="flex items-center justify-between">
-                              <div>
-                                <span className="text-white text-sm font-medium">{leg.playerName}</span>
-                                <span className="text-gray-400 text-sm"> · {leg.suggestedLine}</span>
-                              </div>
+                              <div><span className="text-white text-sm font-medium">{leg.playerName}</span><span className="text-gray-400 text-sm"> · {leg.suggestedLine}</span></div>
                               <div className="flex items-center gap-2">
                                 <span className="text-green-400 text-sm font-bold">${leg.odds.toFixed(2)}</span>
                                 <span className="text-gray-500 text-xs">{leg.bayesianRate}%</span>
@@ -504,19 +521,10 @@ export default function Home() {
                               </div>
                             </div>
                           ))}
-                          {promoBoostPct > 0 && (
-                            <div className="flex justify-between text-xs text-blue-400 pt-1 border-t border-gray-800">
-                              <span>After +{promoBoostPct}% boost</span>
-                              <span>${legsOdds(selectedLegs, promoBoostPct).toFixed(2)}</span>
-                            </div>
-                          )}
                         </div>
-
                         {selCorrelated.length > 0 && (
-                          <p className="text-xs text-yellow-400">⚠ {selCorrelated.join(", ")} in multiple legs — true strike rate lower than shown</p>
+                          <p className="text-xs text-yellow-400">⚠ {selCorrelated.join(", ")} in multiple legs</p>
                         )}
-
-                        {/* Stats row */}
                         <div className="grid grid-cols-4 gap-2 pt-2 border-t border-gray-800">
                           <div className="text-center">
                             <div className="text-lg font-bold text-white">${selOdds.toFixed(2)}</div>
@@ -535,24 +543,14 @@ export default function Home() {
                             <div className="text-xs text-gray-500">Kelly stake</div>
                           </div>
                         </div>
-
-                        {/* Actions */}
                         <div className="flex gap-2 pt-1">
-                          <button
-                            onClick={() => {
-                              selectedLegs.forEach(l => addToMyMulti(l));
-                              setTab("multi");
-                            }}
+                          <button onClick={() => { selectedLegs.forEach(l => addToMyMulti(l)); setTab("multi"); }}
                             className="flex-1 py-2.5 rounded-lg bg-green-500 text-black text-sm font-bold hover:bg-green-400">
                             Add to My Multi →
                           </button>
-                          <button
-                            onClick={() => {
-                              const legs = legsForGame(selectedGame!);
-                              setSelectedLegs(bestCombo(legs, promoMinOdds, promoBoostPct));
-                            }}
+                          <button onClick={() => setSelectedLegs([])}
                             className="px-3 py-2.5 rounded-lg bg-gray-800 text-gray-300 text-sm hover:bg-gray-700">
-                            ↺ Auto
+                            Clear
                           </button>
                         </div>
                       </div>
@@ -562,17 +560,14 @@ export default function Home() {
                     <div>
                       <button onClick={() => setGameLegsExpanded(v => !v)}
                         className="w-full flex items-center justify-between py-2 text-sm text-gray-400 hover:text-white">
-                        <span>All legs for this game ({allLegs.length} available · tap to toggle)</span>
+                        <span>All legs ({allLegs.length} available · tap to toggle)</span>
                         <span>{gameLegsExpanded ? "▲" : "▼"}</span>
                       </button>
-
-                      {/* Always show top 5, expand for rest */}
                       <div className="space-y-2 mt-2">
-                        {(gameLegsExpanded ? allLegs : allLegs.slice(0, 8)).map(leg => {
+                        {(gameLegsExpanded ? allLegs : allLegs.slice(0, 6)).map(leg => {
                           const sel = isSelected(leg);
                           return (
-                            <button key={`${leg.playerName}::${leg.statType}`}
-                              onClick={() => toggleLeg(leg)}
+                            <button key={`${leg.playerName}::${leg.statType}`} onClick={() => toggleLeg(leg)}
                               className={`w-full text-left rounded-xl p-3 border transition-all ${sel ? "bg-green-950 border-green-600" : "bg-gray-900 border-gray-800 hover:border-gray-600"}`}>
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
@@ -586,7 +581,7 @@ export default function Home() {
                                 </div>
                                 <div className="text-right">
                                   <div className="text-green-400 font-bold text-sm">${leg.odds.toFixed(2)}</div>
-                                  <div className="text-xs text-gray-500">{leg.hasLiveOdds ? leg.bookie : "est."}</div>
+                                  <div className="text-xs text-gray-500">{leg.bookie}</div>
                                 </div>
                               </div>
                               <div className="flex gap-3 mt-2 text-xs text-gray-500">
@@ -594,6 +589,8 @@ export default function Home() {
                                 <span>L10 <span className="text-white">{leg.hitRate10}%</span></span>
                                 <span>L5 <span className="text-white">{leg.hitRate5}%</span></span>
                                 <span>Avg <span className="text-white">{leg.seasonAvg}</span></span>
+                                <span className="text-blue-400 font-semibold">{leg.bayesianRate}% SR</span>
+                                {(() => { const ev = Math.round((leg.bayesianRate - (1 / leg.odds) * 100) * 10) / 10; return <span className={ev >= 0 ? "text-green-400 font-semibold" : "text-red-400"}>{ev >= 0 ? "+" : ""}{ev}% EV</span>; })()}
                               </div>
                               <div className="flex gap-1 mt-2">
                                 {leg.recentForm.map((v, i) => (
@@ -606,18 +603,17 @@ export default function Home() {
                             </button>
                           );
                         })}
-                        {!gameLegsExpanded && allLegs.length > 8 && (
+                        {!gameLegsExpanded && allLegs.length > 6 && (
                           <button onClick={() => setGameLegsExpanded(true)}
                             className="w-full py-2 text-xs text-gray-500 hover:text-white">
-                            Show {allLegs.length - 8} more legs ↓
+                            Show {allLegs.length - 6} more legs ↓
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {/* Odds freshness note */}
                     <p className="text-xs text-gray-600 text-center">
-                      Sportsbet odds scraped daily — verify live prices before placing.
+                      Odds from {[...new Set(allLegs.map(l => l.bookie))].join(", ")} · verify live before placing
                     </p>
                   </div>
                 );
@@ -625,7 +621,6 @@ export default function Home() {
             ) : (
               // ── Game List ──
               <>
-                {/* Confidence filter */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500">Min confidence:</span>
                   {[70, 75, 80, 85].map(v => (
@@ -638,49 +633,66 @@ export default function Home() {
 
                 {gameList.length === 0 ? (
                   <div className="text-center py-12 text-gray-500">
-                    <p className="text-lg mb-2">No games found</p>
-                    <p className="text-sm">Run <code className="text-gray-300">node scripts/fetch-player-stats.mjs</code> to update player data</p>
+                    <p className="text-lg mb-2">No games today or tomorrow</p>
+                    <p className="text-sm">Check back closer to the next round</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {gameList.map(({ matchup, commenceTime, game }) => {
                       const legs = legsForGame(matchup);
-                      const auto = legs.length >= 2 ? bestCombo(legs, 0, 0) : legs.slice(0, 2);
-                      const odds = auto.length ? legsOdds(auto) : 0;
-                      const sr = auto.length ? legsSR(auto) : 0;
+                      const combos = bestCombos(legs, 0, 0, false);
+                      const topCombo = combos.find(c => c.legs.length >= 2) ?? combos[0];
+                      const topSingle = legs[0];
                       return (
                         <button key={matchup} onClick={() => openGame(matchup)}
                           className="w-full text-left bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-green-700 transition-colors">
-                          <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start justify-between gap-2 mb-3">
                             <div className="flex-1">
                               <p className="font-semibold text-white">{matchup}</p>
-                              {commenceTime && <p className="text-xs text-gray-500 mt-0.5">{formatTime(commenceTime)}</p>}
-                              {game?.squiggleTip && (
-                                <p className="text-xs text-gray-600 mt-0.5">
-                                  {game.squiggleTip} favoured {game.squiggleConfidence ? `· ${game.squiggleConfidence}%` : ""}
-                                </p>
+                              <p className="text-xs text-gray-500 mt-0.5">{formatTime(commenceTime)}</p>
+                              {game.squiggleTip && (
+                                <p className="text-xs text-gray-600 mt-0.5">{game.squiggleTip} favoured{game.squiggleConfidence ? ` · ${game.squiggleConfidence}%` : ""}</p>
                               )}
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-xs text-gray-500">{legs.length} legs</p>
-                              <p className="text-green-400 font-bold">${odds.toFixed(2)}</p>
-                              <p className="text-xs text-gray-500">{sr}% strike</p>
+                              <p className="text-xs text-gray-500">{legs.length} legs available</p>
                             </div>
                           </div>
-                          {auto.length > 0 && (
-                            <div className="mt-3 pt-3 border-t border-gray-800">
-                              <p className="text-xs text-gray-500 mb-1.5">Best auto-multi ({auto.length} legs)</p>
-                              <div className="space-y-1">
-                                {auto.map(leg => (
-                                  <div key={`${leg.playerName}::${leg.statType}`} className="flex justify-between text-xs">
-                                    <span className="text-gray-300">{leg.playerName} · {leg.suggestedLine}</span>
-                                    <span className="text-green-400">${leg.odds.toFixed(2)} · {leg.bayesianRate}%</span>
+
+                          {legs.length === 0 ? (
+                            <p className="text-xs text-gray-600">No legs at {minBayesian}% confidence — tap to lower threshold</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {/* Top single if ≥85% */}
+                              {topSingle?.bayesianRate >= 85 && (
+                                <div className="bg-black bg-opacity-40 rounded-lg p-2.5">
+                                  <p className="text-xs text-gray-500 mb-1">Top single</p>
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-white">{topSingle.playerName} · <span className="text-gray-400">{topSingle.suggestedLine}</span></span>
+                                    <span className="text-green-400 font-bold">${topSingle.odds.toFixed(2)} · {topSingle.bayesianRate}%</span>
                                   </div>
-                                ))}
-                              </div>
+                                </div>
+                              )}
+                              {/* Best multi */}
+                              {topCombo && (
+                                <div className="bg-black bg-opacity-40 rounded-lg p-2.5">
+                                  <div className="flex justify-between mb-1">
+                                    <p className="text-xs text-gray-500">{topCombo.tag}</p>
+                                    <p className="text-xs">
+                                      <span className="text-green-400 font-bold">${topCombo.odds.toFixed(2)}</span>
+                                      <span className="text-gray-500"> · {topCombo.sr}% SR</span>
+                                    </p>
+                                  </div>
+                                  {topCombo.legs.map(leg => (
+                                    <div key={`${leg.playerName}::${leg.statType}`} className="text-xs text-gray-300">
+                                      {leg.playerName} · {leg.suggestedLine}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
-                          <div className="mt-2 text-right text-xs text-green-600 font-medium">View & build →</div>
+                          <div className="mt-2 text-right text-xs text-green-600 font-medium">View all bets →</div>
                         </button>
                       );
                     })}
@@ -695,8 +707,6 @@ export default function Home() {
         {tab === "multi" && (
           <div className="space-y-4">
             <p className="text-gray-400 text-sm">Legs added from game views. Tap ✕ to remove.</p>
-
-            {/* Promotions */}
             <div className="bg-gray-900 rounded-xl p-4 space-y-3">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Promotions</p>
               <div>
@@ -721,38 +731,34 @@ export default function Home() {
             {myLegs.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <p className="text-lg mb-2">No legs added yet</p>
-                <p className="text-sm">Go to Tonight → pick a game → tap legs → Add to My Multi</p>
-                <button onClick={() => setTab("tonight")} className="mt-4 px-4 py-2 bg-green-600 text-black rounded-lg text-sm font-bold">
-                  Browse tonight's games →
+                <p className="text-sm">Go to Today/Tomorrow → pick a game → select a bet → Add to My Multi</p>
+                <button onClick={() => setTab("today")} className="mt-4 px-4 py-2 bg-green-600 text-black rounded-lg text-sm font-bold">
+                  Browse today's games →
                 </button>
               </div>
             ) : (
               <>
-                {/* Legs */}
                 <div className="space-y-2">
                   {myLegs.map(leg => (
                     <div key={`${leg.playerName}::${leg.statType}`} className="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between">
                       <div>
                         <p className="text-white text-sm font-medium">{leg.playerName}</p>
                         <p className="text-green-400 text-sm font-bold">{leg.suggestedLine}</p>
-                        <p className="text-xs text-gray-500">{leg.matchup} · {leg.bayesianRate}% Bayesian · L10 {leg.hitRate10}%</p>
+                        <p className="text-xs text-gray-500">{leg.matchup} · {leg.bayesianRate}% · L10 {leg.hitRate10}%</p>
                       </div>
                       <div className="text-right flex items-center gap-3">
                         <div>
                           <p className="text-green-400 font-bold">${leg.odds.toFixed(2)}</p>
-                          <p className="text-xs text-gray-500">{leg.hasLiveOdds ? leg.bookie : "est."}</p>
+                          <p className="text-xs text-gray-500">{leg.bookie}</p>
                         </div>
                         <button onClick={() => removeFromMyMulti(leg)} className="text-gray-600 hover:text-red-400 text-lg">✕</button>
                       </div>
                     </div>
                   ))}
                 </div>
-
                 {myCorrelated.length > 0 && (
                   <p className="text-xs text-yellow-400">⚠ {myCorrelated.join(", ")} in multiple legs — true strike rate lower than shown</p>
                 )}
-
-                {/* Summary */}
                 <div className="bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
                   <div className="grid grid-cols-4 gap-2">
                     <div className="text-center">
@@ -776,9 +782,7 @@ export default function Home() {
                   {myIsBonusBet && <p className="text-xs text-purple-400 text-center">Bonus bet — stake not returned on win</p>}
                   {myOddsBoostPct > 0 && <p className="text-xs text-blue-400 text-center">+{myOddsBoostPct}% odds boost applied</p>}
                 </div>
-
-                <button onClick={() => setMyLegs([])}
-                  className="w-full py-2 rounded-lg border border-red-900 text-red-400 text-sm hover:bg-red-950">
+                <button onClick={() => setMyLegs([])} className="w-full py-2 rounded-lg border border-red-900 text-red-400 text-sm hover:bg-red-950">
                   Clear all legs
                 </button>
               </>
