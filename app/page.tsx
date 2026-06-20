@@ -95,6 +95,7 @@ interface ComboOption {
   sr: number;
   odds: number;
   kelly: number;
+  halfKelly: number;
   ev: number;
 }
 
@@ -123,8 +124,12 @@ function legsOdds(legs: GameLeg[], boostPct = 0) {
   return Math.round((boostPct > 0 ? raw * (1 + boostPct / 100) : raw) * 100) / 100;
 }
 
+// Validated overconfidence correction (see SESSION_NOTES.md) — model runs ~6% hot,
+// applied consistently here and in the line-selection Kelly in /api/player-props.
+const CALIBRATION_SHRINK = 0.94;
+
 function legsSR(legs: GameLeg[]) {
-  return Math.round(legs.reduce((a, l) => a * (l.bayesianRate / 100), 1) * 1000) / 10;
+  return Math.round(legs.reduce((a, l) => a * (l.bayesianRate / 100) * CALIBRATION_SHRINK, 1) * 1000) / 10;
 }
 
 function legsKelly(legs: GameLeg[], boostPct = 0) {
@@ -132,6 +137,13 @@ function legsKelly(legs: GameLeg[], boostPct = 0) {
   const sr = legsSR(legs) / 100;
   if (odds <= 1) return 0;
   return Math.max(0, Math.round(((sr * odds - 1) / (odds - 1)) * 1000) / 10);
+}
+
+// Full Kelly assumes the probability estimate is exactly right — any model error
+// blows out bust risk. Half-Kelly trades some growth rate for much more error
+// tolerance, which is the standard practical recommendation over full Kelly.
+function legsHalfKelly(legs: GameLeg[], boostPct = 0) {
+  return Math.round((legsKelly(legs, boostPct) / 2) * 10) / 10;
 }
 
 function legsEV(legs: GameLeg[], boostPct = 0, isBonusBet = false) {
@@ -149,6 +161,7 @@ function bestCombos(legs: GameLeg[], promoMinOdds: number, boostPct: number, isB
     sr: legsSR(combo),
     odds: legsOdds(combo, boostPct),
     kelly: legsKelly(combo, boostPct),
+    halfKelly: legsHalfKelly(combo, boostPct),
     ev: legsEV(combo, boostPct, isBonusBet),
   });
 
@@ -354,6 +367,7 @@ export default function Home() {
   const myOdds = Math.round(myRawOdds * (1 + myOddsBoostPct / 100) * 100) / 100;
   const mySR = myLegs.length ? legsSR(myLegs) : 0;
   const myKelly = myOdds > 1 && mySR > 0 ? legsKelly(myLegs, myOddsBoostPct) : 0;
+  const myHalfKelly = myOdds > 1 && mySR > 0 ? legsHalfKelly(myLegs, myOddsBoostPct) : 0;
   const myEV = myLegs.length ? legsEV(myLegs, myOddsBoostPct, myIsBonusBet) : 0;
   const myCorrelated = myLegs.map(l => l.playerName).filter((p, i, a) => a.indexOf(p) !== i);
 
@@ -361,6 +375,7 @@ export default function Home() {
   const selOdds = selectedLegs.length ? legsOdds(selectedLegs, promoBoostPct) : 0;
   const selSR = selectedLegs.length ? legsSR(selectedLegs) : 0;
   const selKelly = legsKelly(selectedLegs, promoBoostPct);
+  const selHalfKelly = legsHalfKelly(selectedLegs, promoBoostPct);
   const selEV = selectedLegs.length ? legsEV(selectedLegs, promoBoostPct, isBonusBet) : 0;
   const selCorrelated = selectedLegs.map(l => l.playerName).filter((p, i, a) => a.indexOf(p) !== i);
 
@@ -512,8 +527,9 @@ export default function Home() {
                               ))}
                             </div>
                             <div className="mt-2 text-xs text-gray-500">
-                              Kelly stake: <span className="text-blue-400 font-bold">${Math.round(bankroll * opt.kelly / 100)}</span>
-                              {opt.kelly > 0 && <span className="ml-2">({opt.kelly}% of bankroll)</span>}
+                              Half-Kelly stake: <span className="text-blue-400 font-bold">${Math.round(bankroll * opt.halfKelly / 100)}</span>
+                              {opt.halfKelly > 0 && <span className="ml-2">({opt.halfKelly}% of bankroll)</span>}
+                              {opt.kelly > 0 && <span className="ml-2 text-gray-600">· full Kelly {opt.kelly}%</span>}
                             </div>
                           </button>
                         ))}
@@ -559,8 +575,9 @@ export default function Home() {
                             <div className="text-xs text-gray-500">EV</div>
                           </div>
                           <div className="text-center">
-                            <div className="text-lg font-bold text-blue-400">${Math.round(bankroll * selKelly / 100)}</div>
-                            <div className="text-xs text-gray-500">Kelly stake</div>
+                            <div className="text-lg font-bold text-blue-400">${Math.round(bankroll * selHalfKelly / 100)}</div>
+                            <div className="text-xs text-gray-500">Half-Kelly stake</div>
+                            <div className="text-[10px] text-gray-600">full Kelly {selKelly}%</div>
                           </div>
                         </div>
                         <div className="flex gap-2 pt-1">
@@ -795,8 +812,9 @@ export default function Home() {
                       <div className="text-xs text-gray-500">EV</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-400">${Math.round(bankroll * myKelly / 100)}</div>
-                      <div className="text-xs text-gray-500">Kelly stake</div>
+                      <div className="text-2xl font-bold text-blue-400">${Math.round(bankroll * myHalfKelly / 100)}</div>
+                      <div className="text-xs text-gray-500">Half-Kelly stake</div>
+                      <div className="text-[10px] text-gray-600">full Kelly {myKelly}%</div>
                     </div>
                   </div>
                   {myIsBonusBet && <p className="text-xs text-purple-400 text-center">Bonus bet — stake not returned on win</p>}

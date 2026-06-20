@@ -174,6 +174,9 @@ Promo:   combined odds ≥ promoMinOdds
 }
 ```
 
+### Kelly staking (fixed 2026-06-20)
+`legsSR()`/`legsKelly()` in `app/page.tsx` now apply the same `CALIBRATION_SHRINK = 0.94` correction used in line selection — previously the combo-level Kelly shown in the UI was computed on the raw, overconfident `bayesianRate`, so it was inflated on top of being full Kelly. Added `legsHalfKelly()` and display it as the primary "stake" number everywhere (full Kelly shown small, secondary). Full Kelly assumes the probability estimate is exactly right and has no error margin — half-Kelly is the standard practical recommendation. A combo that showed 27.5% full Kelly pre-fix now shows ~13.8% half-Kelly stake post-fix, which is a much saner number to actually bet.
+
 ### Line selection logic (fixed 2026-06-19, updated 2026-06-20)
 Filter lines to `seasonAvg >= ceil(line)` FIRST, then sort eligible lines by **Kelly fraction** descending, take index 0. This ensures the chosen line is always one the player's historical average can support.
 
