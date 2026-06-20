@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="96" fill="#0a0a0a"/>
+  <ellipse cx="256" cy="256" rx="170" ry="110" fill="none" stroke="#22c55e" stroke-width="14"/>
+  <line x1="256" y1="146" x2="256" y2="366" stroke="#22c55e" stroke-width="10"/>
+  <line x1="216" y1="186" x2="216" y2="326" stroke="#22c55e" stroke-width="8"/>
+  <line x1="296" y1="186" x2="296" y2="326" stroke="#22c55e" stroke-width="8"/>
+  <text x="256" y="445" font-family="Arial, sans-serif" font-size="56" font-weight="800" fill="#ffffff" text-anchor="middle">AFL</text>
+</svg>
