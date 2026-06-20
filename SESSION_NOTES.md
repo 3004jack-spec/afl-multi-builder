@@ -106,10 +106,13 @@ Every round we have actual results is a free calibration data point. The plan:
 
 ## Open Items / Next Session Priorities
 
+### Vercel auto-deploy (fixed 2026-06-20)
+Git integration had silently stopped triggering deploys on push — every deployment was 21h+ stale despite multiple pushes during this session, requiring manual `vercel --prod` each time. Ran `vercel git connect https://github.com/3004jack-spec/afl-multi-builder.git` to reconnect it. **Verify at the start of next session**: push something trivial and confirm a new deployment appears in `vercel ls` within a minute or two without running `vercel --prod` manually. If it's still not firing, check the GitHub App permissions/webhook in the Vercel dashboard (Project → Settings → Git) — that's a dashboard-only fix I can't do via CLI.
+
 ### HIGH — Before next round
-1. **Refresh Sportsbet data** — `node scripts/fetch-sportsbet-odds.mjs` (current data: 2026-06-19 07:26 UTC, stale before next round)
+1. **Refresh Sportsbet data** — `node scripts/fetch-sportsbet-odds.mjs` (refreshed multiple times 2026-06-20, will be stale again before next round)
 2. **Refresh player stats** — `node scripts/fetch-player-stats.mjs` (current: 130 players, needs weekly update)
-3. **In-app bet logger** — UI to log bets placed with result tracking and running P&L (Jack mentioned this session)
+3. ~~**In-app bet logger**~~ — done 2026-06-20, see History tab + `/api/bet-log` + `data/bet-log.json` (now with per-leg hit/miss tracking)
 
 ### HIGH — Ongoing each round (model improvement loop)
 4. **Log round results** — after each round completes, run `node scripts/fetch-player-stats.mjs` to pull updated stats. Then run `node scripts/validate-model.mjs` to check calibration drift. Takes 5 minutes, builds the dataset that will eventually let us tune the formula.
