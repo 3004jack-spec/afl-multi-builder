@@ -38,6 +38,24 @@ interface OddsGame {
   squiggleTip?: string;
 }
 
+interface BetLeg {
+  name: string;
+  hit: boolean | null;
+}
+
+interface Bet {
+  id: string;
+  date: string;
+  game: string;
+  type: string;
+  legs: BetLeg[];
+  odds: number;
+  stake: number | null;
+  result: "won" | "lost" | "pending" | "not_placed";
+  pnl: number;
+  notes: string;
+}
+
 interface BandResult {
   label: string;
   total: number;
@@ -207,7 +225,7 @@ function bestCombos(legs: GameLeg[], promoMinOdds: number, boostPct: number, isB
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [tab, setTab] = useState<"today" | "multi" | "stats">("today");
+  const [tab, setTab] = useState<"today" | "multi" | "stats" | "history">("today");
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
   const [gameLegsExpanded, setGameLegsExpanded] = useState(false);
   const [selectedLegs, setSelectedLegs] = useState<GameLeg[]>([]);
@@ -242,6 +260,7 @@ export default function Home() {
   const [bands, setBands] = useState<BandResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
+  const [bets, setBets] = useState<Bet[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -250,6 +269,7 @@ export default function Home() {
       fetch("/api/player-props").then(r => r.json()).then(d => setProps(d.props ?? [])),
       fetch("/api/backtest").then(r => r.json()).then(d => { setBands(d.bandResults ?? []); setSummary(d.summary); }),
       fetch("/api/lineups").then(r => r.json()).then(d => setNamedPlayers(new Set(d.named ?? []))).catch(() => {}),
+      fetch("/api/bet-log").then(r => r.json()).then(d => setBets(d.bets ?? [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -376,10 +396,10 @@ export default function Home() {
           </div>
         </div>
         <div className="flex border-t border-gray-800">
-          {(["today", "multi", "stats"] as const).map(t => (
+          {(["today", "multi", "history", "stats"] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setSelectedGame(null); }}
               className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === t ? "text-green-400 border-b-2 border-green-400" : "text-gray-500 hover:text-white"}`}>
-              {t === "today" ? "Today / Tomorrow" : t === "multi" ? `My Multi${myLegs.length ? ` (${myLegs.length})` : ""}` : "Stats"}
+              {t === "today" ? "Today / Tomorrow" : t === "multi" ? `My Multi${myLegs.length ? ` (${myLegs.length})` : ""}` : t === "history" ? "History" : "Stats"}
             </button>
           ))}
         </div>
@@ -785,6 +805,86 @@ export default function Home() {
                 <button onClick={() => setMyLegs([])} className="w-full py-2 rounded-lg border border-red-900 text-red-400 text-sm hover:bg-red-950">
                   Clear all legs
                 </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── HISTORY ── */}
+        {tab === "history" && (
+          <div className="space-y-4">
+            {bets.length === 0 ? (
+              <p className="text-gray-500 text-sm text-center py-8">No bets logged yet.</p>
+            ) : (
+              <>
+                {(() => {
+                  const settled = bets.filter(b => b.result === "won" || b.result === "lost");
+                  const totalStaked = settled.reduce((a, b) => a + (b.stake ?? 0), 0);
+                  const totalPnl = settled.reduce((a, b) => a + b.pnl, 0);
+                  const pending = bets.filter(b => b.result === "pending");
+                  const pendingStaked = pending.reduce((a, b) => a + (b.stake ?? 0), 0);
+                  return (
+                    <div className="bg-gray-900 rounded-xl p-4 grid grid-cols-3 gap-2 text-center">
+                      <div>
+                        <p className={`text-lg font-bold ${totalPnl > 0 ? "text-green-400" : totalPnl < 0 ? "text-red-400" : "text-gray-400"}`}>
+                          {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+                        </p>
+                        <p className="text-xs text-gray-500">Net P&L ({settled.length} settled)</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold text-white">${totalStaked.toFixed(0)}</p>
+                        <p className="text-xs text-gray-500">Staked (settled)</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold text-yellow-400">${pendingStaked.toFixed(0)}</p>
+                        <p className="text-xs text-gray-500">Pending ({pending.length})</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {[...bets].reverse().map(bet => (
+                  <div key={bet.id} className="bg-gray-900 rounded-xl p-4 space-y-2">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-white text-sm font-medium">{bet.game}</p>
+                        <p className="text-gray-500 text-xs">{bet.date} · {bet.type}</p>
+                      </div>
+                      <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                        bet.result === "won" ? "bg-green-900 text-green-400" :
+                        bet.result === "lost" ? "bg-red-900 text-red-400" :
+                        bet.result === "pending" ? "bg-yellow-900 text-yellow-400" :
+                        "bg-gray-800 text-gray-500"
+                      }`}>
+                        {bet.result === "not_placed" ? "not placed" : bet.result}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      {bet.legs.map((leg, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm">
+                          <span className={
+                            leg.hit === true ? "text-green-400" :
+                            leg.hit === false ? "text-red-400" :
+                            "text-gray-600"
+                          }>
+                            {leg.hit === true ? "✓" : leg.hit === false ? "✗" : "•"}
+                          </span>
+                          <span className="text-gray-300">{leg.name}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm pt-1 border-t border-gray-800">
+                      <span className="text-gray-400">${bet.odds.toFixed(2)} odds · ${bet.stake ?? 0} stake</span>
+                      <span className={`font-bold ${bet.pnl > 0 ? "text-green-400" : bet.pnl < 0 ? "text-red-400" : "text-gray-500"}`}>
+                        {bet.pnl !== 0 ? `${bet.pnl > 0 ? "+" : ""}$${bet.pnl.toFixed(2)}` : "—"}
+                      </span>
+                    </div>
+
+                    {bet.notes && <p className="text-xs text-gray-500 pt-1">{bet.notes}</p>}
+                  </div>
+                ))}
               </>
             )}
           </div>

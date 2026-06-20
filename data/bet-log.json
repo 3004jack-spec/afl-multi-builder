@@ -17,7 +17,10 @@
       "date": "2026-06-20",
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "2-leg multi",
-      "legs": ["Adam Cerra 17+ disposals", "Nic Newman 19+ disposals"],
+      "legs": [
+        { "name": "Adam Cerra 17+ disposals", "hit": null },
+        { "name": "Nic Newman 19+ disposals", "hit": null }
+      ],
       "odds": 1.61,
       "stake": 10,
       "result": "pending",
@@ -29,7 +32,11 @@
       "date": "2026-06-20",
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "3-leg multi",
-      "legs": ["Jagga Smith 3+ clearances", "Blake Acres 2+ tackles", "Blake Acres 10+ kicks"],
+      "legs": [
+        { "name": "Jagga Smith 3+ clearances", "hit": null },
+        { "name": "Blake Acres 2+ tackles", "hit": null },
+        { "name": "Blake Acres 10+ kicks", "hit": null }
+      ],
       "odds": 2.66,
       "stake": 5,
       "result": "pending",
@@ -41,12 +48,60 @@
       "date": "2026-06-20",
       "game": "Adelaide Crows v Melbourne Demons",
       "type": "3-leg multi",
-      "legs": ["Josh Rachele 12+ disposals", "Jake Bowey 12+ kicks", "Izak Rankine 1+ goal"],
+      "legs": [
+        { "name": "Josh Rachele 12+ disposals", "hit": true },
+        { "name": "Jake Bowey 12+ kicks", "hit": true },
+        { "name": "Izak Rankine 1+ goal", "hit": false }
+      ],
       "odds": 1.88,
       "stake": 5,
       "result": "lost",
       "pnl": -5,
-      "notes": "Self-placed by Jack. CORRECTED: Rachele and Bowey both hit. Rankine's 1+ goal leg (the strongest-edge leg, +16.5, 85.9% model rate) is what missed. This is normal goal-kicking variance, not a calibration failure — goals are a low-base-rate binary stat, so even a well-priced 86% leg will miss roughly 1 in 7 times. Don't read this as the model being wrong; the edge assessment was sound, the bet just lost on variance."
+      "notes": "Self-placed by Jack. Rachele and Bowey both hit. Rankine's 1+ goal leg (the strongest-edge leg, +16.5, 85.9% model rate) is what missed. This is normal goal-kicking variance, not a calibration failure — goals are a low-base-rate binary stat, so even a well-priced 86% leg will miss roughly 1 in 7 times. Don't read this as the model being wrong; the edge assessment was sound, the bet just lost on variance."
+    },
+    {
+      "id": "5",
+      "date": "2026-06-20",
+      "game": "Collingwood Magpies v Port Adelaide Power",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "Zak Butters 27+ disposals", "hit": null },
+        { "name": "Willem Drew 4+ tackles", "hit": null }
+      ],
+      "odds": 1.61,
+      "stake": 10,
+      "result": "pending",
+      "pnl": 0,
+      "notes": "Jack chose Drew 4+ over the model-optimal 5+ (Kelly 0.192 vs 0.28 once the 0.94 calibration shrink is applied — confirmed in this session's line-selection fix). Still a reasonable, lower-variance bet, just not the highest-Kelly version. Both legs confirmed named, no injury flags."
+    },
+    {
+      "id": "6",
+      "date": "2026-06-20",
+      "game": "Collingwood Magpies v Port Adelaide Power",
+      "type": "single",
+      "legs": [
+        { "name": "Zak Butters 14+ kicks", "hit": null }
+      ],
+      "odds": 1.63,
+      "stake": 5,
+      "result": "pending",
+      "pnl": 0,
+      "notes": "Live price verified by Jack matched model data closely (1.63 vs 1.62). Shrunk SR 70.0%, shrunk EV +14.1%, Kelly 0.225 — best clean single left in the game after Drew/Butters disposals used in bet #5. Considered adding Jack Crisp 15+/16+ disposals as a 2nd leg but both lines were deeply negative Kelly (-1.66 / -1.11, bookmaker priced too efficiently) — correctly skipped."
+    },
+    {
+      "id": "7",
+      "date": "2026-06-20",
+      "game": "Adelaide Crows v Melbourne Demons",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "Harvey Langford 3+ marks", "hit": true },
+        { "name": "Max Gawn 18+ disposals", "hit": true }
+      ],
+      "odds": 1.53,
+      "stake": 10,
+      "result": "won",
+      "pnl": 5.3,
+      "notes": "Backfilled — placed earlier in session, missed from initial log. Both legs hit clean: Langford got his 3+ marks, Gawn smashed the line with 28 disposals (vs 18+ threshold). At the time, raw EV was +6.8% at the model's reference price of $1.58 (actual price taken was $1.53), but shrunk EV (applying the documented overconfidence correction) was negative — model would have flagged this as -EV. Won anyway; good data point that a single overconfidence-corrected miss doesn't mean a bet was wrong, just variance, same as the Rankine goal miss being the opposite case."
     }
   ]
 }
