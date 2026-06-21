@@ -18,14 +18,14 @@
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Adam Cerra 17+ disposals", "hit": null },
-        { "name": "Nic Newman 19+ disposals", "hit": null }
+        { "name": "Adam Cerra 17+ disposals", "hit": true },
+        { "name": "Nic Newman 19+ disposals", "hit": true }
       ],
       "odds": 1.61,
       "stake": 10,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Model edge: Cerra bayesianEdge +15.8, Newman +6.8. Both confirmed named, no injury flags. Shrunk EV ~+15%."
+      "result": "won",
+      "pnl": 6.1,
+      "notes": "Model edge: Cerra bayesianEdge +15.8, Newman +6.8. Both confirmed named, no injury flags. Shrunk EV ~+15%. FINAL: Cerra 18 disposals (needed 17+), Newman 25 disposals (needed 19+). Both hit clean — the held-vs-cashout call earlier in the session paid off."
     },
     {
       "id": "3",
@@ -33,15 +33,15 @@
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "3-leg multi",
       "legs": [
-        { "name": "Jagga Smith 3+ clearances", "hit": null },
-        { "name": "Blake Acres 2+ tackles", "hit": null },
-        { "name": "Blake Acres 10+ kicks", "hit": null }
+        { "name": "Jagga Smith 3+ clearances", "hit": false },
+        { "name": "Blake Acres 2+ tackles", "hit": true },
+        { "name": "Blake Acres 10+ kicks", "hit": true }
       ],
       "odds": 2.66,
       "stake": 5,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Self-placed by Jack. Model-implied fair odds 2.52 (got better price at 2.66). Shrunk SR 43.3%, shrunk EV +15.3%, Kelly 0.092. Note: 2 of 3 legs are same player (Acres) — correlated, not fully independent legs."
+      "result": "lost",
+      "pnl": -5,
+      "notes": "Self-placed by Jack. Model-implied fair odds 2.52 (got better price at 2.66). Shrunk SR 43.3%, shrunk EV +15.3%, Kelly 0.092. Note: 2 of 3 legs are same player (Acres) — correlated, not fully independent legs. FINAL: Smith only had 1 clearance (needed 3+) — this is the leg that sank it. Both Acres legs hit (3 tackles, 13 kicks vs 2+/10+ needed). Same correlated-pair pattern as before: the weakest, lowest-edge leg (Smith, +2.6 edge) was the one that missed, while the stronger-edge legs held up."
     },
     {
       "id": "4",
@@ -65,14 +65,14 @@
       "game": "Collingwood Magpies v Port Adelaide Power",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Zak Butters 27+ disposals", "hit": null },
-        { "name": "Willem Drew 4+ tackles", "hit": null }
+        { "name": "Zak Butters 27+ disposals", "hit": false },
+        { "name": "Willem Drew 4+ tackles", "hit": true }
       ],
       "odds": 1.61,
       "stake": 10,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Jack chose Drew 4+ over the model-optimal 5+ (Kelly 0.192 vs 0.28 once the 0.94 calibration shrink is applied — confirmed in this session's line-selection fix). Still a reasonable, lower-variance bet, just not the highest-Kelly version. Both legs confirmed named, no injury flags."
+      "result": "lost",
+      "pnl": -10,
+      "notes": "Jack chose Drew 4+ over the model-optimal 5+ (Kelly 0.192 vs 0.28 once the 0.94 calibration shrink is applied — confirmed in this session's line-selection fix). Still a reasonable, lower-variance bet, just not the highest-Kelly version. Both legs confirmed named, no injury flags. FINAL: Butters had 25 disposals (needed 27+, missed by 2), Drew got exactly 4 tackles (hit the 4+ line). Butters' disposals leg sank it — close miss, not a bad read, just fell short."
     },
     {
       "id": "6",
@@ -80,13 +80,13 @@
       "game": "Collingwood Magpies v Port Adelaide Power",
       "type": "single",
       "legs": [
-        { "name": "Zak Butters 14+ kicks", "hit": null }
+        { "name": "Zak Butters 14+ kicks", "hit": true }
       ],
       "odds": 1.63,
       "stake": 5,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Live price verified by Jack matched model data closely (1.63 vs 1.62). Shrunk SR 70.0%, shrunk EV +14.1%, Kelly 0.225 — best clean single left in the game after Drew/Butters disposals used in bet #5. Considered adding Jack Crisp 15+/16+ disposals as a 2nd leg but both lines were deeply negative Kelly (-1.66 / -1.11, bookmaker priced too efficiently) — correctly skipped."
+      "result": "won",
+      "pnl": 3.15,
+      "notes": "Live price verified by Jack matched model data closely (1.63 vs 1.62). Shrunk SR 70.0%, shrunk EV +14.1%, Kelly 0.225 — best clean single left in the game after Drew/Butters disposals used in bet #5. Considered adding Jack Crisp 15+/16+ disposals as a 2nd leg but both lines were deeply negative Kelly (-1.66 / -1.11, bookmaker priced too efficiently) — correctly skipped. FINAL: Butters had 18 kicks (needed 14+) — hit clean despite his disposals leg in bet #5 falling short, showing the single was the better-isolated bet."
     },
     {
       "id": "7",
@@ -102,6 +102,36 @@
       "result": "won",
       "pnl": 5.3,
       "notes": "Backfilled — placed earlier in session, missed from initial log. Both legs hit clean: Langford got his 3+ marks, Gawn smashed the line with 28 disposals (vs 18+ threshold). At the time, raw EV was +6.8% at the model's reference price of $1.58 (actual price taken was $1.53), but shrunk EV (applying the documented overconfidence correction) was negative — model would have flagged this as -EV. Won anyway; good data point that a single overconfidence-corrected miss doesn't mean a bet was wrong, just variance, same as the Rankine goal miss being the opposite case."
+    },
+    {
+      "id": "8",
+      "date": "2026-06-20",
+      "game": "St Kilda Saints v Western Bulldogs",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "Ed Richards 3+ marks", "hit": true },
+        { "name": "Ryley Sanders 12+ handballs", "hit": true }
+      ],
+      "odds": 2.1,
+      "stake": null,
+      "result": "not_placed",
+      "pnl": 0,
+      "notes": "Missed the cut-off before placing — would have been a $7 stake. Both confirmed named (Sanders checked separately, Richards assumed same game). Sanders 12+ handballs: shrunk EV +2.3%, Kelly 0.065 — thin but genuine edge, not a standout vs other bets today. FINAL (no money, tracked for dataset only): Richards had 4 marks, Sanders had 20 handballs — both hit comfortably. Would have won ~$7.70 if placed."
+    },
+    {
+      "id": "9",
+      "date": "2026-06-20",
+      "game": "Richmond Tigers v North Melbourne Kangaroos",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "Sam Banks 16+ disposals", "hit": true },
+        { "name": "Jayden Short 14+ kicks", "hit": true }
+      ],
+      "odds": 2.05,
+      "stake": 10,
+      "result": "won",
+      "pnl": 10.5,
+      "notes": "Backfilled — reported won by Jack, missed from initial log. Both legs hit clean."
     }
   ]
 }
