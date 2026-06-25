@@ -86,6 +86,7 @@ interface GameLeg {
   recentForm: number[];
   odds: number;
   bookie: string;
+  bookmakerOdds: Record<string, number>;
   matchup: string;
 }
 
@@ -327,6 +328,7 @@ export default function Home() {
         recentForm: p.recentForm,
         odds: p.bestOdds,
         bookie: p.bestBookie,
+        bookmakerOdds: p.bookmakerOdds,
         matchup,
       }))
       .sort((a, b) => b.bayesianRate - a.bayesianRate);
@@ -621,6 +623,18 @@ export default function Home() {
                                   <div className="text-xs text-gray-500">{leg.bookie}</div>
                                 </div>
                               </div>
+                              {Object.keys(leg.bookmakerOdds ?? {}).length > 1 && (
+                                <div className="flex gap-2 mt-2 flex-wrap">
+                                  {Object.entries(leg.bookmakerOdds)
+                                    .sort((a, b) => b[1] - a[1])
+                                    .map(([bookie, price]) => (
+                                      <span key={bookie}
+                                        className={`text-xs px-2 py-0.5 rounded-full border ${bookie === leg.bookie ? "border-green-600 text-green-400 bg-green-950" : "border-gray-700 text-gray-500"}`}>
+                                        {bookie} ${price.toFixed(2)}
+                                      </span>
+                                    ))}
+                                </div>
+                              )}
                               <div className="flex gap-3 mt-2 text-xs text-gray-500">
                                 <span>Bayesian <span className="text-white font-semibold">{leg.bayesianRate}%</span></span>
                                 <span>L10 <span className="text-white">{leg.hitRate10}%</span></span>

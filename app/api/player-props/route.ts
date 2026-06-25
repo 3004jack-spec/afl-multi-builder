@@ -2,36 +2,34 @@ import { NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
-const ODDS_API_KEY = "0f0d4c20983592fffeaa6e1b11206ebd";
-const ODDS_BASE = "https://api.the-odds-api.com/v4";
+const SQUIGGLE = "https://api.squiggle.com.au";
 
 type StatType = "disposals" | "goals" | "marks" | "kicks" | "handballs" | "tackles" | "clearances";
 
-interface StatDef { stat: StatType; label: string; }
+interface SquiggleEvent { id: string; home_team: string; away_team: string; commence_time: string; }
 
-// Each entry fetched as a separate API call per event so one invalid market can't block others.
-// player_disposals_alternate fetched separately — only available closer to game day.
-const MARKET_STAT: Record<string, StatDef> = {
-  player_disposals:           { stat: "disposals",   label: "disposals" },
-  player_disposals_alternate: { stat: "disposals",   label: "disposals" },
-  player_kicks_over:          { stat: "kicks",       label: "kicks" },
-  player_marks_over:          { stat: "marks",       label: "marks" },
-  player_handballs_over:      { stat: "handballs",   label: "handballs" },
-  player_tackles_over:        { stat: "tackles",     label: "tackles" },
-  player_clearances_over:     { stat: "clearances",  label: "clearances" },
-  player_goals_scored_over:   { stat: "goals",       label: "goals" },
-};
-
-// Markets fetched per event. Alternate disposals fetched separately — fails silently when not priced.
-const PRIMARY_MARKETS = [
-  "player_disposals",
-  "player_kicks_over",
-  "player_marks_over",
-  "player_handballs_over",
-  "player_tackles_over",
-  "player_clearances_over",
-  "player_goals_scored_over",
-];
+// Fixture source: Squiggle (free, no quota) — replaces the old Odds API events lookup,
+// which was stuck returning a stale/wrong round (see SESSION_NOTES.md, 2026-06-25).
+async function getSquiggleFixtures(): Promise<SquiggleEvent[]> {
+  try {
+    const year = new Date().getFullYear();
+    const res = await fetch(`${SQUIGGLE}/?q=games;year=${year}`, {
+      headers: { "User-Agent": "afl-multi-builder/1.0" },
+      next: { revalidate: 300 },
+    });
+    const data = await res.json();
+    return (data.games ?? [])
+      .filter((g: { complete: number; hteam: string | null; ateam: string | null }) => g.complete < 100 && g.hteam && g.ateam)
+      .map((g: { id: number; hteam: string; ateam: string; date: string }) => ({
+        id: String(g.id),
+        home_team: g.hteam,
+        away_team: g.ateam,
+        commence_time: new Date(g.date.replace(" ", "T") + "+10:00").toISOString(),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 interface ThresholdPoint {
   threshold: number;
@@ -129,6 +127,16 @@ function loadSportsbetOdds(): SportsbetOdds | null {
   }
 }
 
+function loadBetrOdds(): SportsbetOdds | null {
+  const filePath = join(process.cwd(), "data", "betr-odds.json");
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function parseRound(r: string): number {
   const n = parseInt(r);
   if (!isNaN(n)) return n;
@@ -205,12 +213,8 @@ export async function GET() {
     return NextResponse.json({ props: [], message: "No player stats. Run: node scripts/fetch-player-stats.mjs" });
   }
 
-  const eventsRes = await fetch(
-    `${ODDS_BASE}/sports/aussierules_afl/events/?apiKey=${ODDS_API_KEY}`,
-    { next: { revalidate: 300 } }
-  );
-  const events = await eventsRes.json();
-  if (!Array.isArray(events)) return NextResponse.json({ props: [] });
+  const events = await getSquiggleFixtures();
+  if (events.length === 0) return NextResponse.json({ props: [] });
 
   // playerName+statType → { matchup, commenceTime, statType, statLabel, lines: line → bookie → odds }
   const playerLineMap = new Map<string, {
@@ -220,37 +224,6 @@ export async function GET() {
     statLabel: string;
     lines: Map<number, Record<string, number>>;
   }>();
-
-  function ingestBookmakers(
-    bookmakers: Array<{ title: string; markets: Array<{ key: string; outcomes: Array<{ name: string; description: string; point: number; price: number }> }> }>,
-    matchup: string,
-    commenceTime: string
-  ) {
-    for (const bm of bookmakers) {
-      for (const market of bm.markets ?? []) {
-        const statDef = MARKET_STAT[market.key];
-        if (!statDef) continue;
-        for (const outcome of market.outcomes ?? []) {
-          if (outcome.name !== "Over") continue;
-          const playerName: string = outcome.description;
-          const line: number = outcome.point;
-          const price: number = outcome.price;
-          // Key by player+stat so same player can have entries for disposals AND kicks etc.
-          const mapKey = `${playerName}::${statDef.stat}`;
-          let entry = playerLineMap.get(mapKey);
-          if (!entry) {
-            entry = { matchup, commenceTime, statType: statDef.stat, statLabel: statDef.label, lines: new Map() };
-            playerLineMap.set(mapKey, entry);
-          }
-          const lineBookies = entry.lines.get(line) ?? {};
-          if (!lineBookies[bm.title] || price > lineBookies[bm.title]) {
-            lineBookies[bm.title] = price;
-          }
-          entry.lines.set(line, lineBookies);
-        }
-      }
-    }
-  }
 
   // Build lookup from events: canonical matchup name → commenceTime
   // Also build a word-based lookup so Sportsbet names (e.g. "GWS GIANTS v Hawthorn") can resolve
@@ -282,32 +255,11 @@ export async function GET() {
     return { canonical: sbMatchup, commenceTime: "" };
   }
 
-  await Promise.all(
-    (events as Array<{ id: string; home_team: string; away_team: string; commence_time: string }>).map(async (event) => {
-      const matchup = `${event.home_team} v ${event.away_team}`;
-      const commenceTime = event.commence_time;
-      const baseUrl = `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&oddsFormat=decimal`;
-
-      // Fetch all primary markets in one call — all are valid so safe to combine
-      try {
-        const res = await fetch(`${baseUrl}&markets=${PRIMARY_MARKETS.join(",")}`, { next: { revalidate: 300 } });
-        const data = await res.json();
-        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup, commenceTime);
-      } catch { /* skip */ }
-
-      // Alternate disposal lines — only available closer to game day, fail silently if not priced
-      try {
-        const res = await fetch(`${baseUrl}&markets=player_disposals_alternate`, { next: { revalidate: 300 } });
-        const data = await res.json();
-        if (data.bookmakers) ingestBookmakers(data.bookmakers, matchup, commenceTime);
-      } catch { /* skip */ }
-    })
-  );
-
-  // Ingest Sportsbet prices — resolve to canonical Odds API matchup name so frontend exact-match works
-  const sbOdds = loadSportsbetOdds();
-  if (sbOdds) {
-    for (const match of sbOdds.matches) {
+  // Ingest scraped bookmaker prices (Sportsbet, Betr, ...) — resolve to canonical
+  // Odds API matchup name so frontend exact-match works
+  function ingestScrapedOdds(scraped: SportsbetOdds | null, bookieName: string) {
+    if (!scraped) return;
+    for (const match of scraped.matches) {
       const { canonical, commenceTime } = resolveCanonicalMatchup(match.matchup);
 
       for (const [playerName, statMap] of Object.entries(match.markets)) {
@@ -322,15 +274,18 @@ export async function GET() {
           for (const [threshStr, price] of Object.entries(thresholds)) {
             const threshold = parseInt(threshStr);
             if (isNaN(threshold) || price < 1.01) continue;
-            const line = threshold - 0.5; // Sportsbet "18+" → line 17.5
+            const line = threshold - 0.5; // "18+" → line 17.5
             const lineBookies = entry.lines.get(line) ?? {};
-            lineBookies["Sportsbet"] = price;
+            lineBookies[bookieName] = price;
             entry.lines.set(line, lineBookies);
           }
         }
       }
     }
   }
+
+  ingestScrapedOdds(loadSportsbetOdds(), "Sportsbet");
+  ingestScrapedOdds(loadBetrOdds(), "Betr");
 
   const props: PlayerProp[] = [];
 

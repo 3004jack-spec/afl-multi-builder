@@ -13,8 +13,6 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT = path.join(__dirname, "..", "data", "player-stats.json");
 
-const ODDS_API_KEY = "0f0d4c20983592fffeaa6e1b11206ebd";
-const ODDS_BASE = "https://api.the-odds-api.com/v4";
 const AFL_TABLES = "https://afltables.com/afl/stats/players";
 const SEASONS = [2023, 2024, 2025, 2026];
 const DELAY_MS = 1500;
@@ -133,53 +131,38 @@ async function fetchPlayerGames(playerName) {
   }
 }
 
-async function getPlayersFromOddsAPI() {
-  console.log("Fetching AFL events from Odds API...");
-  const eventsRes = await fetch(
-    `${ODDS_BASE}/sports/aussierules_afl/events/?apiKey=${ODDS_API_KEY}`
-  );
-  const events = await eventsRes.json();
-  if (!Array.isArray(events)) {
-    console.error("Failed to fetch events:", events);
-    return [];
-  }
-  console.log(`  Found ${events.length} events`);
-
+/**
+ * Discover players from our own scrapers (Sportsbet, Betr) instead of the Odds API.
+ * The Odds API's player_disposals market was the old discovery source, but it's
+ * quota-limited (500 req/month, already exhausted this round) and unreliable —
+ * this is the actual fix for the "Brisbane/Sydney players missing" bug, not just
+ * a workaround. Each scraped file already lists every player it found a disposals
+ * line for, which is all we need to know who to pull AFL Tables history for.
+ */
+function getPlayersFromScrapes() {
   const players = new Map();
 
-  for (const event of events) {
-    const matchup = `${event.home_team} v ${event.away_team}`;
-    console.log(`  Fetching disposal odds for: ${matchup}`);
+  for (const file of ["sportsbet-odds.json", "betr-odds.json"]) {
+    const filePath = path.join(__dirname, "..", "data", file);
+    if (!fs.existsSync(filePath)) continue;
 
+    let scraped;
     try {
-      const res = await fetch(
-        `${ODDS_BASE}/sports/aussierules_afl/events/${event.id}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=player_disposals&oddsFormat=decimal`
-      );
-      const data = await res.json();
-
-      for (const bm of data.bookmakers ?? []) {
-        for (const market of bm.markets ?? []) {
-          if (market.key !== "player_disposals") continue;
-          for (const outcome of market.outcomes ?? []) {
-            if (outcome.name !== "Over") continue;
-            const name = outcome.description;
-            const existing = players.get(name);
-            if (!existing || outcome.price > existing.bestOdds) {
-              players.set(name, {
-                line: outcome.point,
-                bestOdds: outcome.price,
-                bestBookie: bm.title,
-                matchup,
-              });
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error(`  Error fetching odds for ${matchup}: ${e.message}`);
+      scraped = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch {
+      continue;
     }
 
-    await sleep(500);
+    for (const match of scraped.matches ?? []) {
+      for (const [name, statMap] of Object.entries(match.markets ?? {})) {
+        if (players.has(name)) continue;
+        const disposalLines = statMap.disposals ? Object.keys(statMap.disposals).map(Number) : [];
+        players.set(name, {
+          line: disposalLines.length ? Math.min(...disposalLines) : 0,
+          matchup: match.matchup,
+        });
+      }
+    }
   }
 
   return Array.from(players.entries()).map(([name, data]) => ({ name, ...data }));
@@ -194,11 +177,11 @@ async function main() {
     console.log(`Loaded ${Object.keys(existing).length} existing player records\n`);
   }
 
-  const players = await getPlayersFromOddsAPI();
-  console.log(`\nFound ${players.length} players with disposal markets\n`);
+  const players = getPlayersFromScrapes();
+  console.log(`\nFound ${players.length} players across scraped bookmaker data\n`);
 
   if (players.length === 0) {
-    console.log("No players found. Check Odds API key or try again closer to game day.");
+    console.log("No players found. Run fetch-sportsbet-odds.mjs / fetch-betr-odds.mjs first.");
     return;
   }
 
@@ -236,6 +219,11 @@ async function main() {
         matchup: player.matchup,
       };
       fetched++;
+    }
+
+    // Save progress every 10 players so a killed/interrupted run doesn't lose all work.
+    if ((fetched + failed) % 10 === 0) {
+      fs.writeFileSync(OUTPUT, JSON.stringify(output, null, 2));
     }
 
     await sleep(DELAY_MS);

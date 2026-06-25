@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/refresh-all.mjs",
+            "timeout": 900,
+            "async": true,
+            "statusMessage": "Refreshing AFL odds/player data (skips if already run today)..."
+          }
+        ]
+      }
+    ]
+  }
+}

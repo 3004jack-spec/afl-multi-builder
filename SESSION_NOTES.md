@@ -22,10 +22,13 @@
 | Source | Stats covered | How to refresh |
 |---|---|---|
 | AFL Tables (afltables.com) | All stats, historical | `node scripts/fetch-player-stats.mjs` |
-| The Odds API (events endpoint) | Game times + team names | Automatic on page load (h2h quota exhausted) |
+| The Odds API (events endpoint only) | Game times + team names | Automatic on page load (odds quota exhausted 2026-06-22, deprioritized — see below) |
 | Sportsbet scraper | All 7 stats, real prices | `node scripts/fetch-sportsbet-odds.mjs` |
+| Betr scraper (added 2026-06-22, unverified) | All 7 stats (parser unconfirmed) | `node scripts/fetch-betr-odds.mjs` |
 
-**Workflow:** Run the Sportsbet scraper once the day before each round. Check live prices before placing.
+**Workflow:** Run both scrapers once the day before each round (or closer to game day — props open ~24-48h out). Check live prices before placing.
+
+**Strategy shift (2026-06-22):** Jack decided The Odds API isn't reliable long-term — free tier (500 req/month) gets burned fast and we already hit `OUT_OF_USAGE_CREDITS` this session (515/500 used, no visible reset date). New direction: scrape bookmaker sites directly (same Playwright pattern as Sportsbet) instead of relying on a shared third-party odds API, and run those scrapers at the start of each session so prices are always fresh. Betr is the first additional bookmaker built this way — see below. Odds API isn't ripped out yet (it fails silently when out of quota, costs nothing extra) but should be considered for removal once 2+ direct scrapers are proven reliable.
 
 ---
 
@@ -119,10 +122,14 @@ Git integration had silently stopped triggering deploys on push — every deploy
 5. **Build `scripts/log-round-results.mjs`** — scrapes completed round results from AFL Tables and writes to `data/results-log.json` with structure: `{ round, year, playerName, stat, threshold, modelPredicted, actualValue, hit }`. This becomes the ground truth for calibration tracking over time.
 6. **Apply 0.94 calibration shrink** — once we have 3+ rounds of tracked results confirming the gap, multiply bayesianRate by 0.94 before displaying and before Kelly calculation. Reduces overconfidence in high-confidence bands.
 
+### HIGH — Verify Betr scraper against real data (added 2026-06-22)
+`scripts/fetch-betr-odds.mjs` is built and the navigation/match-discovery part is confirmed working (finds all round matches via `betr.com.au/sports/Australian-Rules/101/AFL/AFL-Premiership/43735`). But Betr (like Sportsbet) doesn't post player prop markets until ~24-48h before kickoff, so the category-expand + parsing logic (`STAT_CATEGORIES`, `parseInnerText`) is an untested port of the Sportsbet parser — built blind, never seen against real Betr player-prop DOM. **Re-run it next time a game is within a day of kickoff** and check the console output:
+- If player counts come back >0 for at least one stat: success, move on.
+- If 0 across the board: inspect the live page (`page.screenshot()` or dump `innerText`) to find Betr's actual category labels/DOM structure and fix `STAT_CATEGORIES`/`parseInnerText` accordingly — same troubleshooting loop used to originally build the Sportsbet scraper.
+
 ### MEDIUM — Next session
-7. **Odds API key** — h2h endpoint exhausted. Either wait for monthly reset or get new key at the-odds-api.com. Without it, no win-odds comparison in Match Odds tab.
-5. **TAB API integration** — `https://api.beta.tab.com.au/v1/tab-info-service/sports/AFL%20Football/competitions/AFL/matches` — no auth, covers disposals/marks/tackles/goals. Run `scripts/fetch-tab-odds.mjs`. Gives cross-bookie comparison.
-6. **Multi-bookmaker support** — Odds API already returns multi-bookie data when h2h quota is live. Connect TAB, Neds, Ladbrokes alongside Sportsbet for best price.
+7. **TAB direct scrape** — same approach as Betr, if Betr proves out. `https://www.tab.com.au` — no public API found yet, would need the same Playwright pattern.
+6. **Multi-bookmaker support** — once Betr (and ideally TAB) scrapers are proven, the player-props route already merges them via `ingestScrapedOdds()` — Sportsbet and Betr are both wired in. No more direct-scrape providers planned yet; add the same way (loader function + `ingestScrapedOdds(loadXOdds(), "BookieName")`) if a third is wanted.
 
 ### LOW — Future
 7. **AFL.com.au data source** — official AFL site likely has richer data than AFL Tables: official lineups, injury/medical sub lists, contested possessions, inside 50s, score involvements. Before building: (a) check ToS for scraping restrictions, (b) look for an official API/data feed first. URL: https://www.afl.com.au/ — could meaningfully improve lineup accuracy and add new stat categories not currently tracked.
@@ -185,17 +192,25 @@ Filter lines to `seasonAvg >= ceil(line)` FIRST, then sort eligible lines by **K
 
 **2026-06-20 change:** line selection used to sort by raw `bayesianEdge` (bayesianRate − implied), not Kelly. Edge and Kelly can disagree — a smaller probability gap at much shorter odds can be the better risk-adjusted bet than a bigger gap at longer odds (e.g. 90% at $1.23 vs 79% at $1.56). Switched to ranking by Kelly, computed on the **shrunk** rate (`bayesianRate × 0.94`, the documented overconfidence correction) so line selection and EV are judged on the same calibrated basis. `bayesianEdge` is kept on `PricedLine`/`PlayerProp` for display only, no longer drives selection.
 
-### Odds API
-- Key: `0f0d4c20983592fffeaa6e1b11206ebd`
-- h2h quota: EXHAUSTED (resets monthly)
-- Events endpoint: still works (game times + names only)
-- Only player_disposals valid for AFL on Odds API player props
+### Odds API — DEPRECATED, fully removed from the live code path (2026-06-25)
+- Key `0f0d4c20983592fffeaa6e1b11206ebd` no longer used anywhere in `app/api/`.
+- h2h quota was exhausted, and worse — the events endpoint (used for fixture/commence-time matching) was stuck returning a stale, wrong round, which caused player-props to silently resolve every scraped matchup to an empty `commenceTime`, so the "Today/Tomorrow" filter showed "No games today or tomorrow" even though Sportsbet/Betr had live data for the actual current round.
+- Fixture/commence-time source is now **Squiggle** (`api.squiggle.com.au`, free, no quota, already used for tips) — `getSquiggleFixtures()` in both `app/api/odds/route.ts` and `app/api/player-props/route.ts`. Fetches the full year, filters to `complete < 100` (not yet played) and non-null team names (filters out unscheduled finals slots).
+- Trade-off: `/api/odds`'s head-to-head game-winner odds (favourite, implied %, bookie comparison) no longer populate — Squiggle has fixtures only, no bookmaker pricing. Not yet replaced. Follow-up: scrape Sportsbet's main-markets page for h2h, same pattern as the player-props scraper.
+- Player discovery (`scripts/fetch-player-stats.mjs`) was also fixed earlier the same day to read player names from `data/sportsbet-odds.json` / `data/betr-odds.json` instead of the Odds API's `player_disposals` market — this is what let Brisbane/Sydney players get backfilled into `player-stats.json` for the first time.
+
+### Bookmaker scrapers (direct site scraping, replacing Odds API pricing)
+- `scripts/fetch-sportsbet-odds.mjs` — proven, working.
+- `scripts/fetch-betr-odds.mjs` — Disposals + Goals confirmed working against real data; 5 other stat categories (Kicks, Marks, Tackles, Handballs, Clearances) still return "not found" — Betr likely uses different category labels, not yet fixed.
+- `scripts/refresh-all.mjs` — orchestrates Sportsbet → Betr → player-stats in order (player-stats discovery depends on the first two). Skips if already run today (`data/.last-refresh` marker, `--force` to override).
+- `.claude/settings.json` — `SessionStart` hook runs `node scripts/refresh-all.mjs` automatically each session (capped at once/day).
 
 ### Data files
-- `data/player-stats.json` — 130 players, historical game logs (AFL Tables)
-- `data/sportsbet-odds.json` — 265 players, scraped Sportsbet prices (refresh weekly)
+- `data/player-stats.json` — 348 players, historical game logs (AFL Tables)
+- `data/sportsbet-odds.json` — scraped Sportsbet prices (refresh each round)
+- `data/betr-odds.json` — scraped Betr prices (Disposals/Goals only so far)
 - `data/lineups-override.json` — manual confirmed lineups for upcoming round
-- `data/bet-log.json` — bet history, results, P&L (new)
+- `data/bet-log.json` — bet history, results, P&L
 
 ---
 

@@ -1,13 +1,36 @@
 import { NextResponse } from "next/server";
 
-const ODDS_API_KEY = "0f0d4c20983592fffeaa6e1b11206ebd";
-const ODDS_BASE = "https://api.the-odds-api.com/v4";
 const SQUIGGLE = "https://api.squiggle.com.au";
 const SQUIGGLE_SOURCE = 8;
 
 const SPORTS = [
   { key: "aussierules_afl", label: "AFL" },
 ];
+
+interface SquiggleFixture { id: string; home_team: string; away_team: string; commence_time: string; }
+
+// Fixture source: Squiggle (free, no quota) — the Odds API events endpoint was stuck
+// returning a stale/wrong round (see SESSION_NOTES.md, 2026-06-25).
+async function getSquiggleFixtures(): Promise<SquiggleFixture[]> {
+  try {
+    const year = new Date().getFullYear();
+    const res = await fetch(`${SQUIGGLE}/?q=games;year=${year}`, {
+      headers: { "User-Agent": "afl-multi-builder/1.0" },
+      next: { revalidate: 300 },
+    });
+    const data = await res.json();
+    return (data.games ?? [])
+      .filter((g: { complete: number; hteam: string | null; ateam: string | null }) => g.complete < 100 && g.hteam && g.ateam)
+      .map((g: { id: number; hteam: string; ateam: string; date: string }) => ({
+        id: String(g.id),
+        home_team: g.hteam,
+        away_team: g.ateam,
+        commence_time: new Date(g.date.replace(" ", "T") + "+10:00").toISOString(),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 // Bookmakers to display (Aussie-relevant)
 const BOOKIE_NAMES: Record<string, string> = {
@@ -77,25 +100,9 @@ export async function GET() {
 
   for (const sport of SPORTS) {
     try {
-      // Try h2h odds first; if quota depleted fall back to events-only (no bookie odds)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let games: Array<{ id: string; home_team: string; away_team: string; commence_time: string; bookmakers?: any[] }> = [];
-      const oddsRes = await fetch(
-        `${ODDS_BASE}/sports/${sport.key}/odds/?apiKey=${ODDS_API_KEY}&regions=au&markets=h2h&oddsFormat=decimal`,
-        { next: { revalidate: 300 } }
-      );
-      const oddsData = await oddsRes.json();
-      if (Array.isArray(oddsData)) {
-        games = oddsData;
-      } else {
-        // Quota depleted — fall back to events endpoint (times + team names, no bookie odds)
-        const eventsRes = await fetch(
-          `${ODDS_BASE}/sports/${sport.key}/events/?apiKey=${ODDS_API_KEY}`,
-          { next: { revalidate: 300 } }
-        );
-        const eventsData = await eventsRes.json();
-        if (Array.isArray(eventsData)) games = eventsData.map((e: { id: string; home_team: string; away_team: string; commence_time: string }) => ({ ...e, bookmakers: [] }));
-      }
+      const games: Array<{ id: string; home_team: string; away_team: string; commence_time: string; bookmakers?: any[] }> =
+        (await getSquiggleFixtures()).map((e) => ({ ...e, bookmakers: [] }));
       if (games.length === 0) continue;
 
       for (const game of games) {
