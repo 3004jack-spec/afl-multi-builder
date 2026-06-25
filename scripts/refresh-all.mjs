@@ -3,9 +3,13 @@
  * 1. Sportsbet odds (player props)
  * 2. Betr odds (player props)
  * 3. Player stats (AFL Tables history — discovers players from the two scrapes above)
+ * 4. Bet result check (settles any pending bets whose game has finished)
  *
  * Run manually: node scripts/refresh-all.mjs
  * Also run automatically at the start of each Claude Code session — see .claude/settings.json SessionStart hook.
+ * Caveat: this only fires when a Claude Code session starts, so bet results won't
+ * auto-settle on a day with no session — run check-bet-results.mjs manually, or ask
+ * for a cron-scheduled cloud routine, if you need it to happen with no session open.
  */
 
 import { spawn } from "child_process";
@@ -48,6 +52,7 @@ async function main() {
   await run("fetch-sportsbet-odds.mjs");
   await run("fetch-betr-odds.mjs");
   await run("fetch-player-stats.mjs");
+  await run("check-bet-results.mjs");
 
   writeFileSync(MARKER_PATH, today());
   console.log("\n=== Refresh complete ===");

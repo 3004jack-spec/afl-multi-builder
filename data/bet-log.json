@@ -132,6 +132,21 @@
       "result": "won",
       "pnl": 10.5,
       "notes": "Backfilled — reported won by Jack, missed from initial log. Both legs hit clean."
+    },
+    {
+      "id": "10",
+      "date": "2026-06-25",
+      "game": "Brisbane Lions v Sydney",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "Josh Dunkley 8+ handballs", "hit": null },
+        { "name": "Kai Lohmann 2+ marks", "hit": null }
+      ],
+      "odds": 1.44,
+      "stake": 15,
+      "result": "pending",
+      "pnl": 0,
+      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup."
     }
   ]
 }
