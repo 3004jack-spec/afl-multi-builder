@@ -240,13 +240,27 @@ export async function GET() {
     canonicalEvents.push({ canonical, commenceTime: event.commence_time, words: [homeWords, awayWords] });
   }
 
+  // Sportsbet sometimes uses abbreviations/nicknames Squiggle doesn't (e.g. "GWS GIANTS"
+  // vs Squiggle's "Greater Western Sydney") — expand known ones so word-overlap matching works.
+  const TEAM_ALIASES: Record<string, string[]> = {
+    gws: ["greater", "western", "sydney"],
+    giants: ["greater", "western", "sydney"],
+  };
+  function expandAliases(words: Set<string>): Set<string> {
+    const out = new Set(words);
+    for (const w of words) {
+      if (TEAM_ALIASES[w]) for (const alias of TEAM_ALIASES[w]) out.add(alias);
+    }
+    return out;
+  }
+
   function resolveCanonicalMatchup(sbMatchup: string): { canonical: string; commenceTime: string } {
     // Exact match first
     if (matchupTimeMap.has(sbMatchup)) return { canonical: sbMatchup, commenceTime: matchupTimeMap.get(sbMatchup)! };
     const parts = sbMatchup.toLowerCase().split(" v ");
     if (parts.length !== 2) return { canonical: sbMatchup, commenceTime: "" };
-    const sbHomeWords = new Set(parts[0].split(/\s+/).filter(w => w.length > 2));
-    const sbAwayWords = new Set(parts[1].split(/\s+/).filter(w => w.length > 2));
+    const sbHomeWords = expandAliases(new Set(parts[0].split(/\s+/).filter(w => w.length > 2)));
+    const sbAwayWords = expandAliases(new Set(parts[1].split(/\s+/).filter(w => w.length > 2)));
     for (const ev of canonicalEvents) {
       const homeMatch = [...sbHomeWords].some(w => ev.words[0].has(w)) || [...ev.words[0]].some(w => sbHomeWords.has(w));
       const awayMatch = [...sbAwayWords].some(w => ev.words[1].has(w)) || [...ev.words[1]].some(w => sbAwayWords.has(w));
