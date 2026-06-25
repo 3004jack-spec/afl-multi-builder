@@ -1,5 +1,5 @@
 # AFL Multi Builder — Session Notes
-*Last updated: 2026-06-19*
+*Last updated: 2026-06-25*
 
 ---
 
@@ -29,6 +29,32 @@
 **Workflow:** Run both scrapers once the day before each round (or closer to game day — props open ~24-48h out). Check live prices before placing.
 
 **Strategy shift (2026-06-22):** Jack decided The Odds API isn't reliable long-term — free tier (500 req/month) gets burned fast and we already hit `OUT_OF_USAGE_CREDITS` this session (515/500 used, no visible reset date). New direction: scrape bookmaker sites directly (same Playwright pattern as Sportsbet) instead of relying on a shared third-party odds API, and run those scrapers at the start of each session so prices are always fresh. Betr is the first additional bookmaker built this way — see below. Odds API isn't ripped out yet (it fails silently when out of quota, costs nothing extra) but should be considered for removal once 2+ direct scrapers are proven reliable.
+
+---
+
+## Session 2026-06-25 Changes
+
+### 1. Automatic bet result checking — built and verified ✅
+New `scripts/check-bet-results.mjs`: once a bet's game is complete (checked via Squiggle), fetches each leg's player's AFL Tables row and auto-records `won`/`lost` + pnl in `data/bet-log.json`. Wired into `scripts/refresh-all.mjs` as step 4 (after the existing scrapers), so it runs once/day via the `SessionStart` hook.
+
+**Bug found + fixed during testing:** AFL Tables and Squiggle number rounds differently this season (bye-week offset) — round 15 on Squiggle is round 16 on AFL Tables. Round-based matching silently failed for every bet. Fixed by matching games on **date** instead (pulled from the AFL Tables row's link href), which is unambiguous. Verified against bet #2 (known answer: WON, $6.10) before trusting it on live pending bets.
+
+**Caveat (unresolved):** this only fires when a Claude Code session starts that day. A day with no session won't auto-settle pending bets. True "no session needed" automation would require a cron-scheduled cloud routine — not yet built, ask if wanted.
+
+### 2. Fixed Hawthorn v GWS missing from Today/Tomorrow tab ✅
+Root cause: Sportsbet labels the team "GWS GIANTS," Squiggle (fixture source) calls it "Greater Western Sydney" — no shared words, so the matchup resolver (`app/api/player-props/route.ts`) couldn't attach a kickoff time, and the game silently dropped out of the Today/Tomorrow filter. Fixed with a small alias map (`gws`/`giants` → `greater western sydney`). Verified live — game now merges into one 143-prop entry with correct kickoff time.
+
+### 3. Model foundation audited — confirmed intact, no drift ✅
+Jack flagged a concern the model might be "wandering." Audited the four core rules from last week — all unchanged:
+- Line eligibility gate (`seasonAvg >= ceil(line)`, filtered before Kelly ranking) — `app/api/player-props/route.ts:374`
+- `CALIBRATION_SHRINK = 0.94` still applied in `legsSR()` — `app/page.tsx:130,133`
+- Min-confidence floor (`minBayesian`, default 75%) still gates the leg pool before combos are built — `app/page.tsx:317`
+- Tiered SR thresholds unchanged: Single ≥85%, 2-leg positive-Kelly-only (never had its own floor, by original design), 3-leg ≥65%, 4-leg ≥55%
+
+**Lesson for next session:** any ad-hoc analysis script that queries `/api/player-props` directly must replicate `minBayesian >= 75` filtering and the `seasonAvg >= threshold` line-eligibility gate — otherwise it surfaces legs (e.g. 38–53% SR longshots) the real app would never show, which is misleading when discussing "best combo" results with Jack.
+
+### 4. No new guardrail for binary/low-count stats (deferred, not built)
+Jack raised a real distinction: low-count stats (goals, clearances) are higher-variance/coinflip-ish at a given SR vs. high-volume stats (kicks, disposals) with more buffer above the line. Confirmed this was never actually coded — it came up only as conversational reasoning (e.g. explaining the Rankine goal-leg miss). Decided to leave it for now. If revisited: either a blunt per-stat-type SR discount, or (better, more work) a per-player volatility measure based on how close the threshold sits to their actual game-to-game variance, not just season average.
 
 ---
 
@@ -66,11 +92,7 @@ Monthly quota depleted. App now falls back to events endpoint (game times + name
 
 ## Bet Log
 
-| Date | Game | Bet | Odds | Stake | Result | P&L |
-|---|---|---|---|---|---|---|
-| 2026-06-19 | Gold Coast v Hawthorn | 2-leg multi (model pick, ~$1.64) | $1.64 | — | Missed (not placed) | $0 |
-
-*Jack would have taken the 2-leg multi at $1.64 offered by the model for tonight's game. Tracking from next round.*
+`data/bet-log.json` is the source of truth (10 bets logged as of 2026-06-25) — don't duplicate it here, it'll go stale. Current state: bet #10 (Dunkley + Lohmann, Brisbane v Sydney, $1.44, $15) is **pending** — will auto-settle once `check-bet-results.mjs` runs after that game completes (see Session 2026-06-25 notes above for the fix that makes this reliable).
 
 ---
 
