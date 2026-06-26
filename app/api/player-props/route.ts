@@ -51,6 +51,24 @@ interface PricedLine {
   kelly: number;         // Kelly fraction on shrunk bayesianRate — used to pick the optimal line
 }
 
+interface InjuryFlag {
+  team: string;
+  injury: string;
+  returning: string; // e.g. "Test", "1-2 weeks" — "Test" means genuine doubt about playing
+}
+
+interface SelectionFlag {
+  status: "out" | "emergency"; // "out": dropped from named side; "emergency": boundary risk, may be added in
+}
+
+interface WeatherFlag {
+  venue: string;
+  precipProbability: number | null;
+  precipMm: number | null;
+  windKph: number | null;
+  wetWeatherFlag: boolean; // true if precipProbability >= 50% or precipMm >= 1 at kickoff hour
+}
+
 interface PlayerProp {
   playerName: string;
   matchup: string;
@@ -77,6 +95,9 @@ interface PlayerProp {
   seasonAvg: number;
   recentForm: number[];
   thresholds: ThresholdPoint[];
+  injuryFlag: InjuryFlag | null; // from Footywire injury list — manual investigation trigger, not a model input
+  selectionFlag: SelectionFlag | null; // from Footywire team selections — "out" or "emergency" this round
+  weatherFlag: WeatherFlag | null; // from Open-Meteo forecast at kickoff hour — per-game, not per-player
 }
 
 interface StoredGame {
@@ -103,6 +124,59 @@ function loadPlayerStats(): Record<string, StoredPlayer> {
   if (!existsSync(filePath)) return {};
   try {
     return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function loadInjuryList(): Record<string, InjuryFlag> {
+  const filePath = join(process.cwd(), "data", "injury-list.json");
+  if (!existsSync(filePath)) return {};
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf8"));
+    return data.players ?? {};
+  } catch {
+    return {};
+  }
+}
+
+interface TeamSelectionGame {
+  named: string[];
+  outs: string[];
+  emergencies: string[];
+}
+
+function loadTeamSelections(): Record<string, TeamSelectionGame> {
+  const filePath = join(process.cwd(), "data", "team-selections.json");
+  if (!existsSync(filePath)) return {};
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf8"));
+    return data.games ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// Build a single combined "out"/"emergency" lookup across all games — team-selection page labels
+// games slightly differently from our canonical matchup (includes venue, different team-name forms),
+// so rather than re-resolving per game we just key by player name globally (collisions across a single
+// round are effectively impossible — a player only appears in one game per round).
+function buildSelectionFlagLookup(): Record<string, SelectionFlag> {
+  const games = loadTeamSelections();
+  const lookup: Record<string, SelectionFlag> = {};
+  for (const game of Object.values(games)) {
+    for (const name of game.outs) lookup[name] = { status: "out" };
+    for (const name of game.emergencies) lookup[name] = { status: "emergency" };
+  }
+  return lookup;
+}
+
+function loadWeather(): Record<string, WeatherFlag> {
+  const filePath = join(process.cwd(), "data", "weather.json");
+  if (!existsSync(filePath)) return {};
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf8"));
+    return data.games ?? {};
   } catch {
     return {};
   }
@@ -301,6 +375,9 @@ export async function GET() {
   ingestScrapedOdds(loadSportsbetOdds(), "Sportsbet");
   ingestScrapedOdds(loadBetrOdds(), "Betr");
 
+  const injuryList = loadInjuryList();
+  const selectionFlags = buildSelectionFlagLookup();
+  const weatherByMatchup = loadWeather();
   const props: PlayerProp[] = [];
 
   for (const [mapKey, entry] of playerLineMap.entries()) {
@@ -420,6 +497,9 @@ export async function GET() {
       seasonAvg,
       recentForm,
       thresholds,
+      injuryFlag: injuryList[playerName] ?? null,
+      selectionFlag: selectionFlags[playerName] ?? null,
+      weatherFlag: weatherByMatchup[entry.matchup] ?? null,
     });
   }
 

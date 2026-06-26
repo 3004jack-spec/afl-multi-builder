@@ -1,5 +1,5 @@
 # AFL Multi Builder — Session Notes
-*Last updated: 2026-06-25*
+*Last updated: 2026-06-26*
 
 ---
 
@@ -25,12 +25,37 @@
 | The Odds API (events endpoint only) | Game times + team names | Automatic on page load (odds quota exhausted 2026-06-22, deprioritized — see below) |
 | Sportsbet scraper | All 7 stats, real prices | `node scripts/fetch-sportsbet-odds.mjs` |
 | Betr scraper (added 2026-06-22, unverified) | All 7 stats (parser unconfirmed) | `node scripts/fetch-betr-odds.mjs` |
+| Footywire injury list (added 2026-06-26) | Injury/return-status flag, manual-investigation only | `node scripts/fetch-injury-list.mjs` |
+| Footywire team selections (added 2026-06-26) | Outs/Emergencies flag, manual-investigation only | `node scripts/fetch-team-selections.mjs` |
+| Open-Meteo (added 2026-06-26) | Wet-weather flag per game/venue, manual-investigation only | `node scripts/fetch-weather.mjs` |
 
 **Workflow:** Run both scrapers once the day before each round (or closer to game day — props open ~24-48h out). Check live prices before placing.
 
 **Strategy shift (2026-06-22):** Jack decided The Odds API isn't reliable long-term — free tier (500 req/month) gets burned fast and we already hit `OUT_OF_USAGE_CREDITS` this session (515/500 used, no visible reset date). New direction: scrape bookmaker sites directly (same Playwright pattern as Sportsbet) instead of relying on a shared third-party odds API, and run those scrapers at the start of each session so prices are always fresh. Betr is the first additional bookmaker built this way — see below. Odds API isn't ripped out yet (it fails silently when out of quota, costs nothing extra) but should be considered for removal once 2+ direct scrapers are proven reliable.
 
 ---
+
+## Session 2026-06-26 Changes
+
+### 1. Fixed cross-bookmaker odds mixing in multis — real bug, not just a labeling gap ✅
+Jack asked whether multi legs were combining best odds across multiple platforms (Sportsbet/Betr) rather than staying on one bookie. They were: `bestCombos()` in `app/page.tsx` built every combo from a leg pool where each leg already carried its own independently-best-bookie price (`bestOdds`/`bestBookie` picked per-line across bookies in `app/api/player-props/route.ts`), with zero constraint that a combo's legs share a bookmaker. A "Best 2-leg" could be Leg A's best Sportsbet price × Leg B's best Betr price — not a bet placeable as one multi anywhere.
+
+**Fix:** `bestCombos()` now runs every category's search (single, 2/3/4-leg, long shot, promo) separately per-bookie (`legsForBookie()` substitutes each leg's price for that specific bookie, dropping legs that bookie doesn't offer), then picks whichever bookie produced the highest-Kelly result for that category — but the winning combo's legs are now guaranteed to share one bookmaker. `ComboOption` got a new `bookie` field, surfaced as a tag on every combo card (Recommended Bets list, game-card summary).
+
+Also added a same-bookie check on the two manual flows where Jack hand-picks legs (My Multi tab, and the per-game "selected legs" summary) — since those let you pick any leg regardless of bookie, a red "⚠ Mixed bookies" warning now shows if the hand-picked legs don't all share one bookmaker.
+
+### 2. Three new manual-investigation flags added — built and verified ✅
+Jack asked whether the model checks injuries/niggles — it didn't. Added three flags as **information for Jack to manually investigate, not model inputs** (deliberately not folded into bayesianRate/Kelly — see SESSION_NOTES lesson from 2026-06-19 about false precision):
+
+- **Injury flag** (`scripts/fetch-injury-list.mjs` → `data/injury-list.json`) — scrapes Footywire's injury list (plain HTML, no Playwright needed). ~155 entries across 18 teams. Shows as `⚠ {injury} ({returning})` badge on a leg, e.g. "⚠ Head (Test)".
+- **Selection flag** (`scripts/fetch-team-selections.mjs` → `data/team-selections.json`) — scrapes Footywire's team-selections page for "Outs" (dropped from named side, zero injury required) and "Emergencies" (boundary risk) per game. This is the genuine "late withdrawal" signal — `data/lineups-override.json` was found to be empty/dead, nothing in the codebase populates it, so this scraper replaces that gap. Shows as `⚠ OUT of side` (red) or `⚠ Emergency` (yellow).
+- **Weather flag** (`scripts/fetch-weather.mjs` → `data/weather.json`) — Open-Meteo forecast (free, no key; BOM itself has no clean JSON forecast endpoint) at kickoff hour for each venue, keyed by Squiggle's `venue` field via a manual venue→lat/lon lookup (`VENUE_COORDS` in the script — add new venues here if a fetch logs "No coords for venue"). Flags `wetWeatherFlag: true` when rain probability ≥50% or precip ≥1mm. Shows as `⚠ Wet weather (N% rain)` per game.
+
+All three wired into `app/api/player-props/route.ts` (`injuryFlag`, `selectionFlag`, `weatherFlag` on `PlayerProp`) and surfaced in `app/page.tsx`: a per-game "⚠ flags present" / wet-weather badge on the Today/Tomorrow game cards, and per-leg badges in both the expanded "All legs" list and the "Selected legs" (My Multi) summary. All three added to `scripts/refresh-all.mjs` so they refresh daily with everything else.
+
+**Known limitation:** selection-flag name matching is exact-string only (`data[playerName]` lookup) — Footywire's team-selection slugs occasionally differ from AFL Tables' player-stats names (e.g. apostrophes, disambiguating suffixes like "Callum Brown 1"). A mismatch means a flag silently doesn't attach, not a false flag — worth fuzzy-matching later if it turns out to miss real cases.
+
+**Side discovery, unresolved:** the Footywire team-selections scrape independently lists a "Clayton Oliver" in Hawthorn's named side for the Hawthorn v GWS game — a second source agreeing with the Sportsbet scrape that was earlier assumed to be a one-off scraper bug (Clayton Oliver is Melbourne's star midfielder). Two independent sources agreeing on this means it's not just a scraper glitch — worth a manual check on whether there's a different, lesser-known Hawthorn player with the same name before trusting either way.
 
 ## Session 2026-06-25 Changes
 
@@ -92,7 +117,9 @@ Monthly quota depleted. App now falls back to events endpoint (game times + name
 
 ## Bet Log
 
-`data/bet-log.json` is the source of truth (10 bets logged as of 2026-06-25) — don't duplicate it here, it'll go stale. Current state: bet #10 (Dunkley + Lohmann, Brisbane v Sydney, $1.44, $15) is **pending** — will auto-settle once `check-bet-results.mjs` runs after that game completes (see Session 2026-06-25 notes above for the fix that makes this reliable).
+`data/bet-log.json` is the source of truth (10 bets logged as of 2026-06-26) — don't duplicate it here, it'll go stale. Current state: bet #10 (Dunkley + Lohmann, Brisbane v Sydney, $1.44, $15) is **pending**.
+
+**2026-06-26 false-negative caught and reverted:** `check-bet-results.mjs` auto-settled bet #10 as LOST on a refresh run where AFL Tables only had round-15 data for both players — the Brisbane v Sydney game (round 16, played 2026-06-25) hadn't been scraped into `player-stats.json` yet, and the script's "no game record → treat as DNP/miss" logic silently turned that data lag into a loss. Manually verified via Squiggle (game shows 100% complete) and reverted the bet to pending in `data/bet-log.json` (see its `notes` field for the full trail). **The underlying bug is still live** — `check-bet-results.mjs` cannot currently tell "player didn't play" apart from "AFL Tables hasn't published this round yet." Re-run `fetch-player-stats.mjs` + `check-bet-results.mjs` once AFL Tables has round 16, and consider hardening the script to check the player's most-recent-game round number against the bet's round before trusting a DNP read.
 
 ---
 
@@ -130,6 +157,9 @@ Every round we have actual results is a free calibration data point. The plan:
 ---
 
 ## Open Items / Next Session Priorities
+
+### HIGH — Nothing from today is committed or deployed yet
+All of today's work (cross-bookmaker multi fix, injury/selection/weather flags) is sitting as uncommitted local changes — confirmed via `git status` at session end (8 modified files, 7 new untracked files, nothing staged). Last commit on the repo is still 2026-06-25. **Before this matters for real betting decisions, commit and push, then verify the Vercel deploy picks it up** (see the auto-deploy note below — it was flaky as recently as 2026-06-20).
 
 ### Vercel auto-deploy (fixed 2026-06-20)
 Git integration had silently stopped triggering deploys on push — every deployment was 21h+ stale despite multiple pushes during this session, requiring manual `vercel --prod` each time. Ran `vercel git connect https://github.com/3004jack-spec/afl-multi-builder.git` to reconnect it. **Verify at the start of next session**: push something trivial and confirm a new deployment appears in `vercel ls` within a minute or two without running `vercel --prod` manually. If it's still not firing, check the GitHub App permissions/webhook in the Vercel dashboard (Project → Settings → Git) — that's a dashboard-only fix I can't do via CLI.
@@ -224,15 +254,18 @@ Filter lines to `seasonAvg >= ceil(line)` FIRST, then sort eligible lines by **K
 ### Bookmaker scrapers (direct site scraping, replacing Odds API pricing)
 - `scripts/fetch-sportsbet-odds.mjs` — proven, working.
 - `scripts/fetch-betr-odds.mjs` — Disposals + Goals confirmed working against real data; 5 other stat categories (Kicks, Marks, Tackles, Handballs, Clearances) still return "not found" — Betr likely uses different category labels, not yet fixed.
-- `scripts/refresh-all.mjs` — orchestrates Sportsbet → Betr → player-stats in order (player-stats discovery depends on the first two). Skips if already run today (`data/.last-refresh` marker, `--force` to override).
+- `scripts/refresh-all.mjs` — orchestrates Sportsbet → Betr → player-stats → injury-list → team-selections → weather → check-bet-results in order (player-stats discovery depends on the first two). Skips if already run today (`data/.last-refresh` marker, `--force` to override).
 - `.claude/settings.json` — `SessionStart` hook runs `node scripts/refresh-all.mjs` automatically each session (capped at once/day).
 
 ### Data files
 - `data/player-stats.json` — 348 players, historical game logs (AFL Tables)
 - `data/sportsbet-odds.json` — scraped Sportsbet prices (refresh each round)
 - `data/betr-odds.json` — scraped Betr prices (Disposals/Goals only so far)
-- `data/lineups-override.json` — manual confirmed lineups for upcoming round
+- `data/lineups-override.json` — **dead/unused**, empty since at least 2026-06-25, nothing populates it. Superseded by `data/team-selections.json` for the "named/out" signal — don't bother fixing this one.
 - `data/bet-log.json` — bet history, results, P&L
+- `data/injury-list.json` — Footywire injury list (added 2026-06-26), manual-investigation flag only
+- `data/team-selections.json` — Footywire team selections / Outs / Emergencies (added 2026-06-26), manual-investigation flag only
+- `data/weather.json` — Open-Meteo forecast per game/venue (added 2026-06-26), manual-investigation flag only
 
 ---
 

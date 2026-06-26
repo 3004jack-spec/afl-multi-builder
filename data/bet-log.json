@@ -18,8 +18,14 @@
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Adam Cerra 17+ disposals", "hit": true },
-        { "name": "Nic Newman 19+ disposals", "hit": true }
+        {
+          "name": "Adam Cerra 17+ disposals",
+          "hit": true
+        },
+        {
+          "name": "Nic Newman 19+ disposals",
+          "hit": true
+        }
       ],
       "odds": 1.61,
       "stake": 10,
@@ -33,9 +39,18 @@
       "game": "Greater Western Sydney Giants v Carlton Blues",
       "type": "3-leg multi",
       "legs": [
-        { "name": "Jagga Smith 3+ clearances", "hit": false },
-        { "name": "Blake Acres 2+ tackles", "hit": true },
-        { "name": "Blake Acres 10+ kicks", "hit": true }
+        {
+          "name": "Jagga Smith 3+ clearances",
+          "hit": false
+        },
+        {
+          "name": "Blake Acres 2+ tackles",
+          "hit": true
+        },
+        {
+          "name": "Blake Acres 10+ kicks",
+          "hit": true
+        }
       ],
       "odds": 2.66,
       "stake": 5,
@@ -49,9 +64,18 @@
       "game": "Adelaide Crows v Melbourne Demons",
       "type": "3-leg multi",
       "legs": [
-        { "name": "Josh Rachele 12+ disposals", "hit": true },
-        { "name": "Jake Bowey 12+ kicks", "hit": true },
-        { "name": "Izak Rankine 1+ goal", "hit": false }
+        {
+          "name": "Josh Rachele 12+ disposals",
+          "hit": true
+        },
+        {
+          "name": "Jake Bowey 12+ kicks",
+          "hit": true
+        },
+        {
+          "name": "Izak Rankine 1+ goal",
+          "hit": false
+        }
       ],
       "odds": 1.88,
       "stake": 5,
@@ -65,8 +89,14 @@
       "game": "Collingwood Magpies v Port Adelaide Power",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Zak Butters 27+ disposals", "hit": false },
-        { "name": "Willem Drew 4+ tackles", "hit": true }
+        {
+          "name": "Zak Butters 27+ disposals",
+          "hit": false
+        },
+        {
+          "name": "Willem Drew 4+ tackles",
+          "hit": true
+        }
       ],
       "odds": 1.61,
       "stake": 10,
@@ -80,7 +110,10 @@
       "game": "Collingwood Magpies v Port Adelaide Power",
       "type": "single",
       "legs": [
-        { "name": "Zak Butters 14+ kicks", "hit": true }
+        {
+          "name": "Zak Butters 14+ kicks",
+          "hit": true
+        }
       ],
       "odds": 1.63,
       "stake": 5,
@@ -94,8 +127,14 @@
       "game": "Adelaide Crows v Melbourne Demons",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Harvey Langford 3+ marks", "hit": true },
-        { "name": "Max Gawn 18+ disposals", "hit": true }
+        {
+          "name": "Harvey Langford 3+ marks",
+          "hit": true
+        },
+        {
+          "name": "Max Gawn 18+ disposals",
+          "hit": true
+        }
       ],
       "odds": 1.53,
       "stake": 10,
@@ -109,8 +148,14 @@
       "game": "St Kilda Saints v Western Bulldogs",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Ed Richards 3+ marks", "hit": true },
-        { "name": "Ryley Sanders 12+ handballs", "hit": true }
+        {
+          "name": "Ed Richards 3+ marks",
+          "hit": true
+        },
+        {
+          "name": "Ryley Sanders 12+ handballs",
+          "hit": true
+        }
       ],
       "odds": 2.1,
       "stake": null,
@@ -124,8 +169,14 @@
       "game": "Richmond Tigers v North Melbourne Kangaroos",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Sam Banks 16+ disposals", "hit": true },
-        { "name": "Jayden Short 14+ kicks", "hit": true }
+        {
+          "name": "Sam Banks 16+ disposals",
+          "hit": true
+        },
+        {
+          "name": "Jayden Short 14+ kicks",
+          "hit": true
+        }
       ],
       "odds": 2.05,
       "stake": 10,
@@ -139,14 +190,20 @@
       "game": "Brisbane Lions v Sydney",
       "type": "2-leg multi",
       "legs": [
-        { "name": "Josh Dunkley 8+ handballs", "hit": null },
-        { "name": "Kai Lohmann 2+ marks", "hit": null }
+        {
+          "name": "Josh Dunkley 8+ handballs",
+          "hit": null
+        },
+        {
+          "name": "Kai Lohmann 2+ marks",
+          "hit": null
+        }
       ],
       "odds": 1.44,
       "stake": 15,
       "result": "pending",
       "pnl": 0,
-      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup."
+      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup. NOTE 2026-06-26: check-bet-results.mjs auto-settled this LOST ('no game record / DNP?') because AFL Tables only had data through round 15 for both players when the script ran — round 16 (this match) hadn't been scraped yet. Reverted to pending; confirmed false negative. Re-run the checker once AFL Tables publishes round 16 data, and consider adding a guard to check-bet-results.mjs that refuses to mark DNP/loss when a player has zero games in the relevant round rather than treating missing data as a miss."
     }
   ]
 }

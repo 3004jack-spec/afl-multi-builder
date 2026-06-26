@@ -3,7 +3,10 @@
  * 1. Sportsbet odds (player props)
  * 2. Betr odds (player props)
  * 3. Player stats (AFL Tables history — discovers players from the two scrapes above)
- * 4. Bet result check (settles any pending bets whose game has finished)
+ * 4. Injury list (Footywire — manual-investigation flag, not a model input)
+ * 5. Team selections (Footywire — late withdrawal / "out of side" / emergency flag)
+ * 6. Weather (Open-Meteo — wet-weather flag per game/venue)
+ * 7. Bet result check (settles any pending bets whose game has finished)
  *
  * Run manually: node scripts/refresh-all.mjs
  * Also run automatically at the start of each Claude Code session — see .claude/settings.json SessionStart hook.
@@ -52,6 +55,9 @@ async function main() {
   await run("fetch-sportsbet-odds.mjs");
   await run("fetch-betr-odds.mjs");
   await run("fetch-player-stats.mjs");
+  await run("fetch-injury-list.mjs");
+  await run("fetch-team-selections.mjs");
+  await run("fetch-weather.mjs");
   await run("check-bet-results.mjs");
 
   writeFileSync(MARKER_PATH, today());
