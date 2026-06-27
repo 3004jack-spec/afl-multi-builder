@@ -203,7 +203,32 @@
       "stake": 15,
       "result": "pending",
       "pnl": 0,
-      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup. NOTE 2026-06-26: check-bet-results.mjs auto-settled this LOST ('no game record / DNP?') because AFL Tables only had data through round 15 for both players when the script ran — round 16 (this match) hadn't been scraped yet. Reverted to pending; confirmed false negative. RECURRED 2026-06-27: ran again via refresh-all.mjs --force and made the exact same mistake (AFL Tables still has no round 16 data) — re-reverted to pending. check-bet-results.mjs MUST NOT be trusted to auto-settle this bet until it's hardened to check the player's most-recent-game round against the bet's round before treating a missing record as a loss. Until then, verify any 'lost' result on this bet manually before trusting it."
+      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup. NOTE 2026-06-26: check-bet-results.mjs auto-settled this LOST ('no game record / DNP?') because AFL Tables only had data through round 15 for both players when the script ran — round 16 (this match) hadn't been scraped yet. Reverted to pending; confirmed false negative. RECURRED 2026-06-27: ran again via refresh-all.mjs --force and made the exact same mistake (AFL Tables still has no round 16 data) — re-reverted to pending. check-bet-results.mjs MUST NOT be trusted to auto-settle this bet until it's hardened to check the player's most-recent-game round before treating a missing record as a loss. Until then, verify any 'lost' result on this bet manually before trusting it."
+    },
+    {
+      "id": "11",
+      "date": "2026-06-27",
+      "game": "Carlton v West Coast",
+      "type": "3-leg multi",
+      "legs": [
+        {
+          "name": "Adam Cerra 17+ disposals",
+          "hit": null
+        },
+        {
+          "name": "Nic Newman 19+ disposals",
+          "hit": null
+        },
+        {
+          "name": "Blake Acres 10+ kicks",
+          "hit": null
+        }
+      ],
+      "odds": 2.05,
+      "stake": 16,
+      "result": "pending",
+      "pnl": 0,
+      "notes": "Placed on Sportsbet (Same Game Multi, bet ID O/8844985/0000060/D), Power Play boosted from $2.00 to $2.05. Potential return $32.80. All three Carlton players, all confirmed named, no injury/selection flags. Individual rates: Cerra 92.9% (line 16.5, $1.33), Newman 90.4% (line 18.5, $1.30), Acres 82.6% kicks (line 9.5, $1.25). Shrunk combined SR ~57.6%, naive-multiplied fair odds $2.16 vs actual SGM price $2.00 — bookie discount consistent with same-team correlation pricing (all three are Carlton, so a quiet team day could miss all three together). Edge at $2.05: +8.8% nominal, Kelly 0.173, but flagged as likely overstated given same-game/same-team correlation; bet sized below full Kelly accordingly."
     }
   ]
 }

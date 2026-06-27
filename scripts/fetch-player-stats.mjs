@@ -105,30 +105,87 @@ function parsePlayerGames(html, seasons) {
   return games;
 }
 
-async function fetchPlayerGames(playerName) {
-  const p = toAFLTablesPath(playerName);
-  const url = `${AFL_TABLES}/${p}.html`;
+const TEAM_SUFFIXES = /\s+(Eagles|Giants|GIANTS|SUNS|Suns|Crows|Power|Magpies|Tigers|Saints|Cats|Hawks|Lions|Bombers|Demons|Dockers|Swans|Kangaroos|Bulldogs|Blues)$/i;
 
+function normalizeTeam(name) {
+  return name.replace(TEAM_SUFFIXES, "").trim();
+}
+
+// AFL Tables disambiguates same-named players with a numeric suffix (e.g. Bailey_Williams0.html,
+// Bailey_Williams1.html) but gives no indication via the URL of which is which. A team's own
+// players never appear as an "opponent" in their own game-by-game table, so when a name collides,
+// the correct page is the one where neither matchup team shows up as an opponent more than the
+// other (the real club should have ~0 appearances; an unrelated namesake's club appears normally).
+async function fetchHtml(url) {
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-    });
-
-    if (res.status === 404) {
-      const url0 = `${AFL_TABLES}/${p}0.html`;
-      const res0 = await fetch(url0, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-      });
-      if (!res0.ok) return null;
-      return parsePlayerGames(await res0.text(), SEASONS);
-    }
-
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } });
     if (!res.ok) return null;
-    return parsePlayerGames(await res.text(), SEASONS);
-  } catch (e) {
-    console.error(`  Error fetching ${playerName}: ${e.message}`);
+    return await res.text();
+  } catch {
     return null;
   }
+}
+
+function opponentCounts(html, teams) {
+  const counts = {};
+  for (const team of teams) counts[team] = 0;
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const tdMatch = /<td[^>]*>([\s\S]*?)<\/td>/i.exec(rowMatch[1]);
+    if (!tdMatch) continue;
+    const cells = [...rowMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1].replace(/<[^>]+>/g, "").trim());
+    const opponent = cells[1];
+    if (!opponent) continue;
+    for (const team of teams) {
+      if (opponent === team) counts[team]++;
+    }
+  }
+  return counts;
+}
+
+async function fetchPlayerGames(playerName, matchup) {
+  const p = toAFLTablesPath(playerName);
+
+  // Always probe the bare name AND every numbered variant — AFL Tables doesn't 404 the bare
+  // path just because numbered duplicates also exist, so trusting a 200 on the bare path alone
+  // silently picks the wrong namesake whenever one exists (caught via Bailey Williams/Maurice Rioli).
+  const candidates = [];
+  const baseHtml = await fetchHtml(`${AFL_TABLES}/${p}.html`);
+  if (baseHtml) candidates.push(baseHtml);
+  for (let n = 0; n < 5; n++) {
+    const html = await fetchHtml(`${AFL_TABLES}/${p}${n}.html`);
+    if (!html) break;
+    candidates.push(html);
+  }
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return parsePlayerGames(candidates[0], SEASONS);
+
+  // Multiple namesakes — first narrow to candidates who actually have games in the relevant
+  // seasons. AFL has had many same-named players across history; most "collisions" are a current
+  // player sharing a name with a long-retired one, not a genuine same-era ambiguity.
+  const eraMatches = candidates
+    .map((html) => ({ html, games: parsePlayerGames(html, SEASONS) }))
+    .filter((c) => c.games.length > 0);
+
+  if (eraMatches.length === 0) return null;
+  if (eraMatches.length === 1) return eraMatches[0].games;
+
+  // Genuinely ambiguous within the same era — disambiguate using the two teams in this
+  // player's current matchup (a team never appears as its own player's opponent).
+  const teams = matchup ? matchup.split(/\s+v\s+/i).map(normalizeTeam) : [];
+  if (teams.length === 2) {
+    const scored = eraMatches.map((c) => {
+      const counts = opponentCounts(c.html, teams);
+      return { games: c.games, score: Math.min(counts[teams[0]], counts[teams[1]]) };
+    });
+    scored.sort((a, b) => a.score - b.score);
+    if (scored[0].score < scored[1]?.score) {
+      return scored[0].games;
+    }
+    console.log(`    ⚠ ${playerName}: ambiguous match across ${eraMatches.length} same-era namesakes, defaulting to first`);
+  }
+  return eraMatches[0].games;
 }
 
 /**
@@ -202,7 +259,7 @@ async function main() {
     }
 
     console.log(`  Fetching ${player.name}...`);
-    const games = await fetchPlayerGames(player.name);
+    const games = await fetchPlayerGames(player.name, player.matchup);
 
     if (!games || games.length === 0) {
       console.log(`    ✗ No data found`);
