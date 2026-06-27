@@ -304,7 +304,6 @@ export default function Home() {
   const [props, setProps] = useState<PlayerProp[]>([]);
   const [bands, setBands] = useState<BandResult[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [namedPlayers, setNamedPlayers] = useState<Set<string>>(new Set());
   const [bets, setBets] = useState<Bet[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -313,7 +312,6 @@ export default function Home() {
       fetch("/api/odds").then(r => r.json()).then(d => setGames(d.games ?? [])),
       fetch("/api/player-props").then(r => r.json()).then(d => setProps(d.props ?? [])),
       fetch("/api/backtest").then(r => r.json()).then(d => { setBands(d.bandResults ?? []); setSummary(d.summary); }),
-      fetch("/api/lineups").then(r => r.json()).then(d => setNamedPlayers(new Set(d.named ?? []))).catch(() => {}),
       fetch("/api/bet-log").then(r => r.json()).then(d => setBets(d.bets ?? [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
@@ -340,13 +338,9 @@ export default function Home() {
 
   // Build legs for a game — exact matchup match against player-props (same format, no fuzzy)
   function legsForGame(matchup: string): GameLeg[] {
-    const gamePlayers = props.filter(p => p.matchup === matchup).map(p => p.playerName);
-    // Only apply lineup filter if Footywire data includes at least one player from THIS game.
-    // Prevents weekend selections from blocking a Friday night game where no lineup data exists yet.
-    const lineupApplies = namedPlayers.size > 0 && gamePlayers.some(n => namedPlayers.has(n));
     return props
       .filter(p => p.matchup === matchup && !p.coldForm && p.bayesianRate >= minBayesian)
-      .filter(p => !lineupApplies || namedPlayers.has(p.playerName))
+      .filter(p => p.selectionFlag?.status !== "out")
       .map(p => ({
         playerName: p.playerName,
         statType: p.statType,

@@ -1,20 +1,12 @@
 {
-  "fetchedAt": "2026-06-26T06:10:30.184Z",
+  "fetchedAt": "2026-06-26T23:09:53.733Z",
   "games": {
-    "Hawthorn v Greater Western Sydney": {
-      "venue": "M.C.G.",
-      "kickoff": "2026-06-26T09:40:00.000Z",
-      "precipProbability": 0,
-      "precipMm": 0,
-      "windKph": 7.8,
-      "wetWeatherFlag": false
-    },
     "Carlton v West Coast": {
       "venue": "Docklands",
       "kickoff": "2026-06-27T03:15:00.000Z",
       "precipProbability": 0,
       "precipMm": 0,
-      "windKph": 2.9,
+      "windKph": 1.9,
       "wetWeatherFlag": false
     },
     "Collingwood v Richmond": {
@@ -22,7 +14,7 @@
       "kickoff": "2026-06-27T06:15:00.000Z",
       "precipProbability": 0,
       "precipMm": 0,
-      "windKph": 2.8,
+      "windKph": 4.5,
       "wetWeatherFlag": false
     },
     "Port Adelaide v Adelaide": {
@@ -30,23 +22,23 @@
       "kickoff": "2026-06-27T09:35:00.000Z",
       "precipProbability": 0,
       "precipMm": 0,
-      "windKph": 11.5,
+      "windKph": 11.7,
       "wetWeatherFlag": false
     },
     "North Melbourne v Essendon": {
       "venue": "Docklands",
       "kickoff": "2026-06-28T05:15:00.000Z",
-      "precipProbability": 1,
+      "precipProbability": 0,
       "precipMm": 0,
-      "windKph": 3.1,
+      "windKph": 3.4,
       "wetWeatherFlag": false
     },
     "Fremantle v Gold Coast": {
       "venue": "Perth Stadium",
       "kickoff": "2026-06-28T07:10:00.000Z",
-      "precipProbability": 97,
-      "precipMm": 0.2,
-      "windKph": 11.4,
+      "precipProbability": 99,
+      "precipMm": 0.3,
+      "windKph": 12.9,
       "wetWeatherFlag": true
     }
   }

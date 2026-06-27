@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-06-26T05:56:37.464Z",
+  "fetchedAt": "2026-06-27T02:47:10.309Z",
   "games": {
     "Brisbane v Sydney (Gabba)": {
       "named": [
@@ -32,12 +32,12 @@
         "Harry Cunningham",
         "Nick Blakey",
         "Sam Wicks",
-        "Conor Mckenna",
+        "Conor McKenna",
         "Cameron Rayner",
         "Eric Hipwood",
         "Callum Mills",
         "Will Edwards",
-        "Tom Mccartin",
+        "Tom McCartin",
         "Sam Draper",
         "Josh Dunkley",
         "Lachie Neale",
@@ -48,11 +48,11 @@
         "Angus Sheldrick",
         "Peter Ladhams",
         "Malcolm Rosas",
-        "Logan Mcdonald"
+        "Logan McDonald"
       ],
       "outs": [
         "Shadeau Brain",
-        "Hayden Mclean",
+        "Hayden McLean",
         "Matthew Roberts",
         "Harry Kyle"
       ],
@@ -61,20 +61,21 @@
         "Shadeau Brain",
         "Darragh Joyce",
         "Harry Kyle",
-        "Hayden Mclean",
+        "Hayden McLean",
         "Matthew Roberts"
       ]
     },
     "Hawthorn v GWS (MCG)": {
       "named": [
-        "Calsher Dear",
-        "Ned Reeves",
-        "Josh Ward",
-        "Connor Macdonald",
-        "Jack Dalton",
         "Flynn Perez",
+        "Cameron Mackenzie",
+        "Lloyd Meek",
+        "Connor Macdonald",
+        "Calsher Dear",
+        "Jack Dalton",
         "James Sicily",
         "Josh Battle",
+        "Blake Hardwick",
         "Jake Stringer",
         "Aaron Cadman",
         "Toby Greene",
@@ -87,7 +88,7 @@
         "Massimo D Ambrosio",
         "Will Day",
         "Harry Morrison",
-        "Ryan Angwin",
+        "Conor Stone",
         "Clayton Oliver",
         "Harvey Thomas",
         "Dylan Moore",
@@ -96,21 +97,20 @@
         "Lachlan Ash",
         "Lachie Whitfield",
         "Joseph Fonti",
-        "Blake Hardwick",
         "Mitchell Lewis",
         "Nick Watson",
         "Connor Idun",
         "Sam Taylor",
         "Harrison Himmelberg",
-        "Lloyd Meek",
+        "Ned Reeves",
         "Jai Newcombe",
-        "Cameron Mackenzie",
+        "Josh Ward",
         "Kieren Briggs",
         "Brent Daniels",
         "Finn Callaghan",
         "Harrison Oliver",
         "Leek Aleer",
-        "Conor Stone",
+        "Ryan Angwin",
         "Stephen Coniglio",
         "Callum Brown 1"
       ],
@@ -122,7 +122,7 @@
         "Jayden Laverde"
       ],
       "emergencies": [
-        "William Mccabe",
+        "William McCabe",
         "Bodie Ryan",
         "Sam Butler 1",
         "Harry Rowston",
@@ -156,13 +156,13 @@
         "Elliot Yeo",
         "Bo Allan",
         "Matt Cottrell",
-        "Mitch Mcgovern",
+        "Mitch McGovern",
         "Ben Ainsworth",
         "Marcus Herbert",
         "Tylar Young",
         "Liam Baker",
         "Brodie Kemp",
-        "Harry Mckay",
+        "Harry McKay",
         "Talor Byrne",
         "Liam Duggan",
         "Rhett Bazzo",
@@ -174,7 +174,7 @@
         "Harley Reid",
         "Elijah Hewett",
         "Jack Graham",
-        "Tom Mccarthy",
+        "Tom McCarthy",
         "Brady Hough",
         "Hamish Davis",
         "Jack Hutchinson"
@@ -219,13 +219,13 @@
         "Patrick Retschko",
         "Tim Taranto",
         "James Trezise",
-        "Beau Mccreery",
+        "Beau McCreery",
         "Jordan De Goey",
         "Lachlan Schultz",
         "Nick Vlastuin",
         "Jayden Short",
         "Sam Banks",
-        "Daniel Mcstay",
+        "Daniel McStay",
         "Tim Membrey",
         "Jack Buller",
         "Nathan Broad",
@@ -297,7 +297,7 @@
         "Jordon Sweet",
         "Zak Butters",
         "Willem Drew",
-        "Lachlan Mcandrew",
+        "Lachlan McAndrew",
         "Sam Berry",
         "Jake Soligo",
         "Darcy Fogarty",
@@ -330,10 +330,7 @@
         "Matt Johnson 1",
         "Isaiah Dudley",
         "Sean Darcy",
-        "Judd Mcvee",
-        "Jaeger O Meara",
-        "Corey Wagner",
-        "Chris Scerri",
+        "Judd McVee",
         "Brennan Cox",
         "Alex Pearce",
         "Heath Chapman",
@@ -374,17 +371,22 @@
         "Leo Lombard",
         "Charlie Ballard",
         "Jarrod Witts",
-        "Dylan Patterson",
-        "Zak Evans",
-        "Ben Jepson",
-        "Oscar Adams"
+        "Ben Jepson"
       ],
       "outs": [
         "Mason Cox",
         "Daniel Rioli",
+        "Oscar Adams",
         "Sam Clohesy"
       ],
-      "emergencies": []
+      "emergencies": [
+        "Jaeger O Meara",
+        "Corey Wagner",
+        "Chris Scerri",
+        "Dylan Patterson",
+        "Zak Evans",
+        "Oscar Adams"
+      ]
     }
   }
 }

@@ -28,11 +28,19 @@ const OUT_PATH = join(__dirname, "../data/team-selections.json");
 const URL = "https://www.footywire.com/afl/footy/afl_team_selections";
 
 // "pp-hawthorn-hawks--jarman-impey" -> "Jarman Impey"
+// "pp-essendon-bombers--conor-mckenna" -> "Conor McKenna" (AFL Tables capitalises the letter after "Mc")
+function capitalizeWord(w) {
+  if (/^mc[a-z]/i.test(w) && w.length > 2) {
+    return "Mc" + w.charAt(2).toUpperCase() + w.slice(3);
+  }
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+
 function slugToName(href) {
   const slug = href.split("--").pop();
   return slug
     .split("-")
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .map(capitalizeWord)
     .join(" ");
 }
 

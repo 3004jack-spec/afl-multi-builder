@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-06-26T04:19:09.207Z",
+  "fetchedAt": "2026-06-26T23:09:48.673Z",
   "players": {
     "Callum Ah Chee": {
       "team": "Adelaide Crows",
@@ -339,11 +339,6 @@
     "Logan Smith": {
       "team": "GWS Giants",
       "injury": "Knee",
-      "returning": "Test"
-    },
-    "Max Gruzewski": {
-      "team": "GWS Giants",
-      "injury": "Hand",
       "returning": "Test"
     },
     "Nathan Wardius": {
