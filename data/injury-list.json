@@ -1,15 +1,10 @@
 {
-  "fetchedAt": "2026-06-26T23:09:48.673Z",
+  "fetchedAt": "2026-06-28T02:40:39.902Z",
   "players": {
     "Callum Ah Chee": {
       "team": "Adelaide Crows",
       "injury": "Hamstring",
       "returning": "1-2 weeks"
-    },
-    "Isaac Cumming": {
-      "team": "Adelaide Crows",
-      "injury": "Hamstring",
-      "returning": "Test"
     },
     "Jordon Butts": {
       "team": "Adelaide Crows",
@@ -506,11 +501,6 @@
       "injury": "Knee",
       "returning": "Season"
     },
-    "Jack Lukosius": {
-      "team": "Port Adelaide Power",
-      "injury": "Knee",
-      "returning": "Test"
-    },
     "Josh Sinn": {
       "team": "Port Adelaide Power",
       "injury": "Shoulder",
@@ -540,11 +530,6 @@
       "team": "Richmond Tigers",
       "injury": "Foot",
       "returning": "1-2 weeks"
-    },
-    "Jack Ross": {
-      "team": "Richmond Tigers",
-      "injury": "Head",
-      "returning": "Test"
     },
     "Jacob Hopper": {
       "team": "Richmond Tigers",
@@ -696,25 +681,10 @@
       "injury": "Knee",
       "returning": "Season"
     },
-    "Hamish Davis": {
-      "team": "West Coast Eagles",
-      "injury": "Head",
-      "returning": "Test"
-    },
     "Harry Edwards": {
       "team": "West Coast Eagles",
       "injury": "Head",
       "returning": "TBC"
-    },
-    "Jack Graham": {
-      "team": "West Coast Eagles",
-      "injury": "Shoulder",
-      "returning": "Test"
-    },
-    "Jack Hutchinson": {
-      "team": "West Coast Eagles",
-      "injury": "Hamstring",
-      "returning": "Test"
     },
     "Jacob Newton": {
       "team": "West Coast Eagles",
@@ -745,16 +715,6 @@
       "team": "West Coast Eagles",
       "injury": "Hamstring",
       "returning": "8 weeks"
-    },
-    "Tom McCarthy": {
-      "team": "West Coast Eagles",
-      "injury": "Hamstring",
-      "returning": "Test"
-    },
-    "Willem Duursma": {
-      "team": "West Coast Eagles",
-      "injury": "Leg/Calf",
-      "returning": "Test"
     },
     "Bailey Williams": {
       "team": "Western Bulldogs",

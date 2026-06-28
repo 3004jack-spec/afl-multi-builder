@@ -192,18 +192,18 @@
       "legs": [
         {
           "name": "Josh Dunkley 8+ handballs",
-          "hit": null
+          "hit": true
         },
         {
           "name": "Kai Lohmann 2+ marks",
-          "hit": null
+          "hit": true
         }
       ],
       "odds": 1.44,
       "stake": 15,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup. NOTE 2026-06-26: check-bet-results.mjs auto-settled this LOST ('no game record / DNP?') because AFL Tables only had data through round 15 for both players when the script ran — round 16 (this match) hadn't been scraped yet. Reverted to pending; confirmed false negative. RECURRED 2026-06-27: ran again via refresh-all.mjs --force and made the exact same mistake (AFL Tables still has no round 16 data) — re-reverted to pending. check-bet-results.mjs MUST NOT be trusted to auto-settle this bet until it's hardened to check the player's most-recent-game round before treating a missing record as a loss. Until then, verify any 'lost' result on this bet manually before trusting it."
+      "result": "won",
+      "pnl": 6.6,
+      "notes": "Placed on Sportsbet per model suggestion — the safer of two combos considered tonight (vs. the higher-Kelly but coin-flip Jake Lloyd 6+ marks line, which was correctly skipped as too aggressive). Model reference price was $1.40 (Sportsbet odds on both legs: Dunkley $1.20, Lohmann $1.17); live price taken was $1.44, slightly better than modeled. Shrunk SR ~77.2%, Kelly 0.209. Both players confirmed in tonight's announced lineup. NOTE 2026-06-26: check-bet-results.mjs auto-settled this LOST ('no game record / DNP?') because AFL Tables only had data through round 15 for both players when the script ran — round 16 (this match) hadn't been scraped yet. Reverted to pending; confirmed false negative. RECURRED 2026-06-27: ran again via refresh-all.mjs --force and made the exact same mistake (AFL Tables still has no round 16 data) — re-reverted to pending. check-bet-results.mjs MUST NOT be trusted to auto-settle this bet — confirmed manually by Jack 2026-06-27 as WON. Still needs the round-check hardening before being trusted on future bets."
     },
     {
       "id": "11",
@@ -213,22 +213,90 @@
       "legs": [
         {
           "name": "Adam Cerra 17+ disposals",
-          "hit": null
+          "hit": true
         },
         {
           "name": "Nic Newman 19+ disposals",
-          "hit": null
+          "hit": true
         },
         {
           "name": "Blake Acres 10+ kicks",
-          "hit": null
+          "hit": true
         }
       ],
       "odds": 2.05,
       "stake": 16,
-      "result": "pending",
-      "pnl": 0,
-      "notes": "Placed on Sportsbet (Same Game Multi, bet ID O/8844985/0000060/D), Power Play boosted from $2.00 to $2.05. Potential return $32.80. All three Carlton players, all confirmed named, no injury/selection flags. Individual rates: Cerra 92.9% (line 16.5, $1.33), Newman 90.4% (line 18.5, $1.30), Acres 82.6% kicks (line 9.5, $1.25). Shrunk combined SR ~57.6%, naive-multiplied fair odds $2.16 vs actual SGM price $2.00 — bookie discount consistent with same-team correlation pricing (all three are Carlton, so a quiet team day could miss all three together). Edge at $2.05: +8.8% nominal, Kelly 0.173, but flagged as likely overstated given same-game/same-team correlation; bet sized below full Kelly accordingly."
+      "result": "won",
+      "pnl": 16.8,
+      "notes": "Placed on Sportsbet (Same Game Multi, bet ID O/8844985/0000060/D), Power Play boosted from $2.00 to $2.05. Potential return $32.80. All three Carlton players, all confirmed named, no injury/selection flags. Individual rates: Cerra 92.9% (line 16.5, $1.33), Newman 90.4% (line 18.5, $1.30), Acres 82.6% kicks (line 9.5, $1.25). Shrunk combined SR ~57.6%, naive-multiplied fair odds $2.16 vs actual SGM price $2.00 — bookie discount consistent with same-team correlation pricing (all three are Carlton, so a quiet team day could miss all three together). Edge at $2.05: +8.8% nominal, Kelly 0.173, but flagged as likely overstated given same-game/same-team correlation; bet sized below full Kelly accordingly. Confirmed WON 2026-06-27."
+    },
+    {
+      "id": "12",
+      "date": "2026-06-27",
+      "game": "Port Adelaide v Adelaide",
+      "type": "2-leg multi",
+      "legs": [
+        {
+          "name": "Zak Butters 14+ kicks",
+          "hit": true
+        },
+        {
+          "name": "Rory Laird 10+ handballs",
+          "hit": true
+        }
+      ],
+      "odds": 3.25,
+      "stake": 20,
+      "result": "won",
+      "pnl": 45,
+      "notes": "Placed on Sportsbet (Same Game Multi), Butters $1.58 (line 13.5, 75.4% rate, seasonAvg 14.51) + Laird $1.95-1.97 (line 9.5, 81% rate, seasonAvg 14.14). Both confirmed named, no injury/selection flags. Opposing-team legs (Butters Port Adelaide, Laird Adelaide Crows) — avoids the same-team correlation issue seen on bet #11; actual SGM price ($3.25) priced ABOVE naive multiplication (~$3.11), consistent with no positive correlation tax (possibly mild negative correlation between opposing players' output). Shrunk combined SR ~54%, implied at $3.25 ~30.8%, edge ~+23%, Kelly well above 0.4 — sized at $20, well under full Kelly given this is still a multi. Both legs hit during the match per Jack 2026-06-27, confirmed won — not yet cashed out at time of logging."
+    },
+    {
+      "id": "13",
+      "date": "2026-06-27",
+      "game": "Carlton v West Coast",
+      "type": "3-leg multi",
+      "legs": [
+        { "name": "leg 1 (not itemised — see Sportsbet receipt)", "hit": true },
+        { "name": "leg 2 (not itemised — see Sportsbet receipt)", "hit": true },
+        { "name": "leg 3 (not itemised — see Sportsbet receipt)", "hit": true }
+      ],
+      "odds": 2.30,
+      "stake": 10,
+      "result": "won",
+      "pnl": 13,
+      "notes": "Backfilled from Sportsbet bet history screenshot 2026-06-27 — placed earlier in session, not separately discussed/logged at the time of placement. Same Game Multi, 3 legs, Carlton v West Coast Eagles, Sat 27 Jun 13:15. Stake $10, payout $23.00. Leg-level player/line detail not visible on the receipt card and not captured during this session — backfill only covers headline result."
+    },
+    {
+      "id": "14",
+      "date": "2026-06-26",
+      "game": "Hawthorn v GWS",
+      "type": "3-leg multi",
+      "legs": [
+        { "name": "leg 1 (not itemised — see Sportsbet receipt)", "hit": true },
+        { "name": "leg 2 (not itemised — see Sportsbet receipt)", "hit": true },
+        { "name": "leg 3 (not itemised — see Sportsbet receipt)", "hit": true }
+      ],
+      "odds": 2.50,
+      "stake": 25,
+      "result": "won",
+      "pnl": 37.5,
+      "notes": "Backfilled from Sportsbet bet history screenshot 2026-06-27 — placed Fri 26 Jun, not logged at the time. Same Game Multi, 3 legs, Hawthorn v GWS GIANTS, Fri 26 Jun 19:40. Stake $25, payout $62.50. Leg-level player/line detail not visible on the receipt card and not captured during this session — backfill only covers headline result."
+    },
+    {
+      "id": "15",
+      "date": "2026-06-26",
+      "game": "Hawthorn v GWS",
+      "type": "2-leg multi",
+      "legs": [
+        { "name": "leg 1 (not itemised — see Sportsbet receipt)", "hit": true },
+        { "name": "leg 2 (not itemised — see Sportsbet receipt)", "hit": true }
+      ],
+      "odds": 1.43,
+      "stake": 15,
+      "result": "won",
+      "pnl": 6.45,
+      "notes": "Backfilled from Sportsbet bet history screenshot 2026-06-27 — placed Fri 26 Jun, not logged at the time. Same Game Multi, 2 legs, Hawthorn v GWS GIANTS, Fri 26 Jun 19:40, Power Play boosted from $1.40 to $1.43. Stake $15, payout $21.45. Leg-level player/line detail not visible on the receipt card and not captured during this session — backfill only covers headline result."
     }
   ]
 }

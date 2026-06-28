@@ -53,7 +53,10 @@ async function main() {
   const html = await res.text();
 
   const games = {};
-  const gameBlockRe = /class="tbtitle" height="30">(?:<a name="\d+"><\/a>)?([^<]+)<\/TD><\/TR>([\s\S]*?)(?=<TR><TD COLSPAN="3" ALIGN="CENTER" class="tbtitle" height="30">|<TABLE[^>]*WIDTH="1000")/g;
+  // The lookahead must also accept end-of-string — Footywire's last game block on the page has
+  // no trailing marker to terminate against, so without this the last-listed game (whichever
+  // that happens to be on a given day) is silently dropped from every scrape.
+  const gameBlockRe = /class="tbtitle" height="30">(?:<a name="\d+"><\/a>)?([^<]+)<\/TD><\/TR>([\s\S]*?)(?=<TR><TD COLSPAN="3" ALIGN="CENTER" class="tbtitle" height="30">|<TABLE[^>]*WIDTH="1000"|$)/g;
   let gameMatch;
   while ((gameMatch = gameBlockRe.exec(html)) !== null) {
     const gameLabel = gameMatch[1].trim();
